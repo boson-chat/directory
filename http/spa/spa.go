@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io/fs"
 	"net/http"
+	"net/url"
 	"path"
 	"regexp"
 	"strings"
@@ -114,4 +115,14 @@ func (s *SPA) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	http.ServeContent(w, r, "index.html", startTime, bytes.NewReader(s.index))
+}
+
+// Origin returns scheme://host of u, or "" when u isn't an absolute
+// http(s) URL (so it never widens the CSP).
+func Origin(u string) string {
+	p, err := url.Parse(u)
+	if err != nil || (p.Scheme != "https" && p.Scheme != "http") || p.Host == "" {
+		return ""
+	}
+	return p.Scheme + "://" + p.Host
 }
