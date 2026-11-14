@@ -1,0 +1,32 @@
+# Binaries
+/bin/
+*.exe
+*.test
+*.out
+coverage.*
+
+# Go workspace
+go.work
+go.work.sum
+
+# Local media
+/data/
+
+# UI dependencies and build output (embedded at build time; .gitkeep keeps
+# the directory so Go-only builds compile)
+node_modules/
+/ui/build/*
+!/ui/build/.gitkeep
+/ui/.svelte-kit/
+/ui/test-results/
+/ui/playwright-report/
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+
+# Environment
+.env
+.env.*
+!.env.example

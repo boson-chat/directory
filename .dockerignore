@@ -1,0 +1,11 @@
+.git
+.github
+.env
+bin
+data
+*.test
+*.out
+ui/node_modules
+ui/build
+ui/.svelte-kit
+ui/test-results

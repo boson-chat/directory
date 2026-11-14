@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: directory
+          POSTGRES_PASSWORD: directory-ci
+          POSTGRES_DB: directory
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U directory"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+    env:
+      # Integration tests create a throwaway database per test from this one.
+      TEST_DATABASE_URL: postgres://directory:directory-ci@localhost:5432/directory?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: gofmt
+        run: test -z "$(gofmt -l $(git ls-files '*.go'))" || (gofmt -l $(git ls-files '*.go') && exit 1)
+      - run: go vet ./...
+      - run: go test -race -count=1 ./...
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build --build-arg VERSION=ci -t directory:ci .

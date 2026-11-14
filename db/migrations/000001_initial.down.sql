@@ -1,0 +1,10 @@
+DROP TABLE IF EXISTS audit;
+DROP TABLE IF EXISTS blocks;
+DROP TABLE IF EXISTS peers;
+DROP TRIGGER IF EXISTS networks_tombstone ON networks;
+DROP TRIGGER IF EXISTS networks_bump_seq ON networks;
+DROP FUNCTION IF EXISTS networks_tombstone();
+DROP FUNCTION IF EXISTS networks_bump_seq();
+DROP TABLE IF EXISTS network_tombstones;
+DROP TABLE IF EXISTS networks;
+DROP SEQUENCE IF EXISTS network_seq;
