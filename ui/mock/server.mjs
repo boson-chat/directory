@@ -116,6 +116,7 @@ const PUBLIC = [
 	'auth_url',
 	'icon_url',
 	'banner_url',
+	'theme',
 	'status',
 	'origin',
 	'origin_name',
@@ -127,6 +128,34 @@ const PUBLIC = [
 	'created_at',
 	'updated_at'
 ];
+const SLOTS = [
+	'logo',
+	'logo_wide',
+	'login_background',
+	'pane-servers',
+	'pane-channels',
+	'pane-messages',
+	'pane-members'
+];
+const HEX = /^#[0-9a-fA-F]{6}$/;
+/** The directory's boson-theme/1 checks, enough for the UI's error paths. */
+function themeError(t) {
+	if (!t || typeof t !== 'object' || Array.isArray(t)) return 'the theme must be a JSON object';
+	if (t.version !== undefined && t.version !== 1) return 'theme version must be 1';
+	if (t.base !== undefined && t.base !== 'dark' && t.base !== 'light')
+		return 'theme base must be dark or light';
+	for (const [k, v] of Object.entries(t.colors ?? {}))
+		if (!HEX.test(v)) return `theme colour ${k} must be #rrggbb`;
+	for (const [k, p] of Object.entries(t.panes ?? {})) {
+		if (p.bg && !HEX.test(p.bg)) return `panes.${k}.bg must be #rrggbb`;
+		if (p.dim !== undefined && !(p.dim >= 0 && p.dim <= 1))
+			return `theme panes.${k}.dim must be between 0 and 1`;
+		if (p.blur !== undefined && !(p.blur >= 0 && p.blur <= 24))
+			return `theme panes.${k}.blur must be between 0 and 24`;
+	}
+	if (JSON.stringify(t).length > 16384) return 'the theme is too large (16 KB at most)';
+	return null;
+}
 const pick = (n, keys) => Object.fromEntries(keys.filter((k) => k in n).map((k) => [k, n[k]]));
 const TTL = 72 * 3600_000;
 const expiresAt = (n) =>
@@ -371,7 +400,9 @@ async function apiRoutes(req, res, path, url) {
 		return send(res, 201, listing(n, true));
 	}
 
-	let mm = path.match(/^\/v1\/networks\/([^/]+)(?:\/(verify|regenerate-token|icon|banner))?$/);
+	let mm = path.match(
+		/^\/v1\/networks\/([^/]+)(?:\/(verify|regenerate-token|icon|banner|theme|theme-images\/[a-z_-]+))?$/
+	);
 	if (mm) {
 		const n = state.networks.find((x) => x.id === decodeURIComponent(mm[1]));
 		const own = n && me && (n.owner_auth_user_id === me.id || me.perms.includes('directory.manage'));
@@ -453,6 +484,74 @@ async function apiRoutes(req, res, path, url) {
 			}
 			if (m === 'DELETE') {
 				n[sub + '_url'] = null;
+				return send(res, 200, listing(n, true));
+			}
+		}
+		if (sub === 'theme') {
+			if (m === 'PUT') {
+				const b = await body(req);
+				const bad = themeError(b);
+				if (bad) return err(res, 400, 'invalid_theme', bad);
+				const cur = n.theme ?? {};
+				const next = { ...b, version: 1, base: b.base ?? 'dark' };
+				// Image fields: omitted/null keep the current image, "" removes it.
+				for (const k of ['logo', 'logo_wide', 'login_background']) {
+					if (next[k] == null && cur[k]) next[k] = cur[k];
+					if (next[k] === '' || next[k] == null) delete next[k];
+				}
+				for (const p of ['servers', 'channels', 'messages', 'members']) {
+					const img = next.panes?.[p]?.image;
+					const curImg = cur.panes?.[p]?.image;
+					if (img == null && curImg) ((next.panes ??= {})[p] ??= {}).image = curImg;
+					if (next.panes?.[p] && (next.panes[p].image === '' || next.panes[p].image == null))
+						delete next.panes[p].image;
+				}
+				n.theme = next;
+				return send(res, 200, listing(n, true));
+			}
+			if (m === 'DELETE') {
+				n.theme = null;
+				return send(res, 200, listing(n, true));
+			}
+		}
+		if (sub?.startsWith('theme-images/')) {
+			const slot = sub.slice('theme-images/'.length);
+			if (!SLOTS.includes(slot)) return err(res, 404, 'unknown_slot', 'unknown image slot');
+			const t = (n.theme ??= { version: 1, base: 'dark' });
+			const set = (v) => {
+				if (slot.startsWith('pane-')) {
+					const p = ((t.panes ??= {})[slot.slice(5)] ??= {});
+					if (v) p.image = v;
+					else delete p.image;
+				} else if (v) t[slot] = v;
+				else delete t[slot];
+			};
+			if (m === 'PUT') {
+				const raw = await body(req, true);
+				if (raw.length > 2 * 1024 * 1024)
+					return err(res, 413, 'image_too_large', 'the image is too large (2 MB and 4096 px a side at most)');
+				const type = req.headers['content-type'] || 'application/octet-stream';
+				if (!/^image\/(png|jpeg|webp|gif|svg\+xml)$/.test(type))
+					return err(
+						res,
+						400,
+						'unsupported_image',
+						'unsupported or invalid image (PNG, JPEG, GIF, WebP or SVG)'
+					);
+				if (type === 'image/svg+xml' && /<script|foreignObject|\son\w+=/i.test(raw.toString()))
+					return err(
+						res,
+						400,
+						'unsafe_svg',
+						'the SVG has scripts, foreignObject, event handlers or external references'
+					);
+				const key = `theme-${n.id}-${slot}-${state.seq++}`;
+				state.media.set(key, { type, body: raw });
+				set('/media/' + key);
+				return send(res, 200, listing(n, true));
+			}
+			if (m === 'DELETE') {
+				set(undefined);
 				return send(res, 200, listing(n, true));
 			}
 		}

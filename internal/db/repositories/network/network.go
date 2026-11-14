@@ -5,7 +5,9 @@ package network
 
 import (
 	"context"
+	"database/sql/driver"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -41,19 +43,22 @@ var (
 
 // Network is a row of networks.
 type Network struct {
-	ID                string `gorm:"primaryKey"`
-	Hostname          string
-	Port              int
-	TLS               bool `gorm:"column:tls"`
-	Name              string
-	Description       string
-	Tags              pq.StringArray `gorm:"type:text[]"`
-	Languages         pq.StringArray `gorm:"type:text[]"`
-	IsNSFW            bool           `gorm:"column:is_nsfw"`
-	WebsiteURL        *string
-	AuthURL           *string
-	IconKey           *string
-	BannerKey         *string
+	ID          string `gorm:"primaryKey"`
+	Hostname    string
+	Port        int
+	TLS         bool `gorm:"column:tls"`
+	Name        string
+	Description string
+	Tags        pq.StringArray `gorm:"type:text[]"`
+	Languages   pq.StringArray `gorm:"type:text[]"`
+	IsNSFW      bool           `gorm:"column:is_nsfw"`
+	WebsiteURL  *string
+	AuthURL     *string
+	IconKey     *string
+	BannerKey   *string
+	// Theme is the boson-theme/1 document (internal/services/theme), NULL
+	// when the listing has none. Image fields hold media keys or URLs.
+	Theme             JSONB `gorm:"type:jsonb"`
 	OwnerAuthUserID   *string
 	ManagementKeyHash *string
 	Origin            string
@@ -75,6 +80,32 @@ type Network struct {
 }
 
 func (Network) TableName() string { return "networks" }
+
+// JSONB is a jsonb column; empty is NULL.
+type JSONB []byte
+
+// Value implements driver.Valuer.
+func (j JSONB) Value() (driver.Value, error) {
+	if len(j) == 0 {
+		return nil, nil
+	}
+	return string(j), nil
+}
+
+// Scan implements sql.Scanner.
+func (j *JSONB) Scan(src any) error {
+	switch v := src.(type) {
+	case nil:
+		*j = nil
+	case []byte:
+		*j = append(JSONB(nil), v...)
+	case string:
+		*j = JSONB(v)
+	default:
+		return fmt.Errorf("network: can't scan %T into JSONB", src)
+	}
+	return nil
+}
 
 // IsLocal reports origin=local.
 func (n *Network) IsLocal() bool { return n.Origin == OriginLocal }

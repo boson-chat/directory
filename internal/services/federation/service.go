@@ -23,6 +23,7 @@ package federation
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"sync"
@@ -983,6 +984,11 @@ func (s *FederationService) apply(ctx context.Context, origin string, c FeedChan
 			res.Deleted++
 		}
 		return nil, false, nil
+	}
+	if n.Theme, err = importedTheme(c.Network.Theme, s.d.Strict); err != nil {
+		// A bad theme doesn't cost the listing; it shows without one.
+		res.problem(fmt.Sprintf("%s: theme dropped: %v", trunc(id), err))
+		n.Theme = nil
 	}
 	if seen != nil {
 		seen[id] = true

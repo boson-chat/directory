@@ -11,11 +11,15 @@
 	import CopyField from '$lib/components/CopyField.svelte';
 	import State from '$lib/components/State.svelte';
 	import Time from '$lib/components/Time.svelte';
+	import { listingAccent, listingStyle, readTheme } from '$lib/theme';
 
 	let n = $state<Network | null>(null);
 	let owned = $state(false);
 	let error = $state<{ status: number; message: string } | null>(null);
 	let bannerFailed = $state(false);
+	let theme = $derived(readTheme(n?.theme));
+	let style = $derived(listingStyle(theme));
+	let accent = $derived(listingAccent(theme));
 
 	async function load(id: string) {
 		error = null;
@@ -58,14 +62,14 @@
 {:else if !n}
 	<State kind="loading" title="Loading the network…" />
 {:else}
-	<article class="net">
-		<div class="banner" class:empty={!n.banner_url || bannerFailed}>
+	<article class="net" class:themed={!!style} {style}>
+		<div class="banner" class:empty={!n.banner_url || bannerFailed} class:tinted={!!accent}>
 			{#if n.banner_url && !bannerFailed}
 				<img src={n.banner_url} alt="" onerror={() => (bannerFailed = true)} />
 			{/if}
 		</div>
 		<header class="head">
-			<span class="ic"><NetworkIcon name={n.name} url={n.icon_url} size={72} /></span>
+			<span class="ic"><NetworkIcon name={n.name} url={n.icon_url ?? theme?.logo} size={72} /></span>
 			<div class="title">
 				<h1>{n.name}</h1>
 				<div class="sub">
@@ -179,6 +183,19 @@
 				color-mix(in oklab, var(--border), transparent 40%) 11px 12px
 			),
 			var(--surface-raised);
+	}
+	.banner.empty.tinted {
+		background:
+			linear-gradient(120deg, color-mix(in oklab, var(--accent), transparent 50%), transparent 70%),
+			repeating-linear-gradient(
+				135deg,
+				transparent 0 11px,
+				color-mix(in oklab, var(--accent), transparent 85%) 11px 12px
+			),
+			var(--surface-raised);
+	}
+	.themed {
+		color: var(--fg);
 	}
 	.banner img {
 		width: 100%;

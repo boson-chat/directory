@@ -1,6 +1,7 @@
 package federation
 
 import (
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -98,5 +99,71 @@ func TestImportedNetworkValidation(t *testing.T) {
 	c.Network.IconURL = ptr("http://dir-a:8080/media/i.png")
 	if _, err := importedNetwork("peer:per_1", c, false); err != nil {
 		t.Fatalf("lax icon: %v", err)
+	}
+}
+
+func TestFeedCarriesTheme(t *testing.T) {
+	now := time.Now()
+	stored := `{"version":1,"base":"dark","colors":{"accent":"#7c3aed"},"panes":{"messages":{"image":"network-themes/net_1-pane-messages-ab.webp","dim":0.6}},"logo":"network-themes/net_1-logo-cd.svg","login_background":"https://cdn.example/bg.jpg"}`
+	changes := []network.Change{
+		{Seq: 3, Network: &network.Network{ID: "net_1", Hostname: "irc.a.test", Port: 6697, Name: "A",
+			Origin: network.OriginLocal, Status: network.StatusVerified, VerificationToken: "tok-aaaaaaaa",
+			Theme: network.JSONB(stored), CreatedAt: now, UpdatedAt: now}},
+		{Seq: 4, Network: &network.Network{ID: "net_2", Hostname: "irc.b.test", Port: 6697, Name: "B",
+			Origin: network.OriginLocal, Status: network.StatusVerified, VerificationToken: "tok-bbbbbbbb", CreatedAt: now, UpdatedAt: now}},
+	}
+	page := buildFeed(changes, 0, 10, func(k string) string {
+		if strings.HasPrefix(k, "https://") {
+			return k
+		}
+		return "https://dir.test/media/" + k
+	})
+	got := string(page.Changes[0].Network.Theme)
+	for _, want := range []string{`"logo":"https://dir.test/media/network-themes/net_1-logo-cd.svg"`,
+		`"image":"https://dir.test/media/network-themes/net_1-pane-messages-ab.webp"`, `"login_background":"https://cdn.example/bg.jpg"`, `"accent":"#7c3aed"`} {
+		if !strings.Contains(got, want) {
+			t.Errorf("feed theme lacks %s: %s", want, got)
+		}
+	}
+	if page.Changes[1].Network.Theme != nil {
+		t.Fatal("no theme must be omitted")
+	}
+	raw, _ := json.Marshal(page.Changes[1])
+	if strings.Contains(string(raw), "theme") {
+		t.Fatalf("theme key on a listing without one: %s", raw)
+	}
+
+	// The importer keeps it (URLs hot-linked) after validating it again.
+	c := validChange()
+	c.Network.Theme = page.Changes[0].Network.Theme
+	th, err := importedTheme(c.Network.Theme, true)
+	if err != nil || !strings.Contains(string(th), "https://dir.test/media/network-themes/net_1-logo-cd.svg") {
+		t.Fatalf("%s %v", th, err)
+	}
+	// Keys (not URLs), bad colours, http in production: rejected.
+	for _, bad := range []string{`{"logo":"network-themes/x.png"}`, `{"colors":{"bg":"red"}}`, `{"logo":"http://dir-a:8080/media/x.png"}`} {
+		if _, err := importedTheme(json.RawMessage(bad), true); err == nil {
+			t.Errorf("%s accepted", bad)
+		}
+	}
+	if th, err := importedTheme(json.RawMessage(`{"logo":"http://dir-a:8080/media/x.png"}`), false); err != nil || th == nil {
+		t.Fatalf("lax: %v", err)
+	}
+	if th, err := importedTheme(nil, true); err != nil || th != nil {
+		t.Fatal("absent theme")
+	}
+}
+
+func TestFeedPageStopsAtThemeBudget(t *testing.T) {
+	big := `{"version":1,"base":"dark","logo":"https://cdn.example/` + strings.Repeat("a", 15000) + `"}`
+	var changes []network.Change
+	for i := range 300 {
+		changes = append(changes, network.Change{Seq: int64(i + 1), Network: &network.Network{
+			ID: "net_" + strings.Repeat("x", 3), Hostname: "irc.a.test", Port: 6697, Name: "A", Origin: network.OriginLocal,
+			Status: network.StatusVerified, VerificationToken: "tok-aaaaaaaa", Theme: network.JSONB(big)}})
+	}
+	page := buildFeed(changes, 0, 500, func(k string) string { return k })
+	if !page.HasMore || len(page.Changes) >= 300 || page.NextSince != int64(len(page.Changes)) {
+		t.Fatalf("has_more=%v changes=%d next=%d", page.HasMore, len(page.Changes), page.NextSince)
 	}
 }

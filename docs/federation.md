@@ -15,6 +15,7 @@ network's `_boson.<hostname>` TXT record itself.
     {"seq": 41, "network": {"id": "net_…", "hostname": "irc.example.org", "port": 6697, "tls": true,
       "name": "…", "description": "…", "tags": ["…"], "languages": ["en"], "is_nsfw": false,
       "website_url": "https://…", "auth_url": "https://…", "icon_url": "https://…", "banner_url": "https://…",
+      "theme": {"version": 1, "base": "dark", "colors": {"accent": "#7c3aed"}, "logo": "https://…"},
       "created_at": "…", "updated_at": "…"},
      "verification_token": "…", "deleted": false},
     {"seq": 42, "network": {"id": "net_…"}, "deleted": true}
@@ -32,6 +33,10 @@ network's `_boson.<hostname>` TXT record itself.
   pending, lapsed or blocked, or deleted, is sent as `deleted: true` with
   just its id (unverified hostnames are not public).
 - Owner data (account, network key hash) and probe data are never exported.
+- `theme` (boson-theme/1, absolute image URLs) is omitted when the listing has
+  none. Importers validate it with the owner-write rules and hot-link its
+  images; an invalid theme is dropped without rejecting the listing. A page
+  ends early (`has_more: true`) once its themes reach 3 MiB.
 
 ## Peers (operator API, `directory.manage`)
 

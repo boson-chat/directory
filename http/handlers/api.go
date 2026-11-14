@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"errors"
 	"io"
 	nethttp "net/http"
@@ -15,6 +16,7 @@ import (
 	"github.com/boson-chat/directory/internal/principal"
 	"github.com/boson-chat/directory/internal/services/media"
 	"github.com/boson-chat/directory/internal/services/networks"
+	"github.com/boson-chat/directory/internal/services/theme"
 )
 
 func (h *Handlers) registerAPI(r *router.Router) {
@@ -35,6 +37,11 @@ func (h *Handlers) registerAPI(r *router.Router) {
 		r.Authed("PUT /v1/networks/{id}/"+string(kind), h.writes(h.putImage(kind)))
 		r.Authed("DELETE /v1/networks/{id}/"+string(kind), h.writes(h.deleteImage(kind)))
 	}
+	// Branding (boson-theme/1): the document, and its images by slot.
+	r.Authed("PUT /v1/networks/{id}/theme", h.writes(h.putTheme))
+	r.Authed("DELETE /v1/networks/{id}/theme", h.writes(h.deleteTheme))
+	r.Authed("PUT /v1/networks/{id}/theme-images/{slot}", h.writes(h.putThemeImage))
+	r.Authed("DELETE /v1/networks/{id}/theme-images/{slot}", h.writes(h.deleteThemeImage))
 }
 
 func (h *Handlers) listing(r *nethttp.Request, n *network.Network) views.Listing {
@@ -295,11 +302,15 @@ func (h *Handlers) regenerate(w nethttp.ResponseWriter, r *nethttp.Request) {
 // readImage reads a raw image body (PUT with Content-Type image/*), or the
 // first file of a multipart/form-data upload.
 func readImage(w nethttp.ResponseWriter, r *nethttp.Request) ([]byte, error) {
-	r.Body = nethttp.MaxBytesReader(w, r.Body, media.MaxUploadBytes+64<<10)
+	return readUpload(w, r, media.MaxUploadBytes, "the image is too large (5 MiB at most)")
+}
+
+func readUpload(w nethttp.ResponseWriter, r *nethttp.Request, limit int64, tooLarge string) ([]byte, error) {
+	r.Body = nethttp.MaxBytesReader(w, r.Body, limit+64<<10)
 	var src io.Reader = r.Body
 	if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
-		if err := r.ParseMultipartForm(media.MaxUploadBytes); err != nil {
-			return nil, apperr.New(nethttp.StatusRequestEntityTooLarge, "image_too_large", "the image is too large (5 MiB at most)")
+		if err := r.ParseMultipartForm(limit); err != nil {
+			return nil, apperr.New(nethttp.StatusRequestEntityTooLarge, "image_too_large", tooLarge)
 		}
 		for _, files := range r.MultipartForm.File {
 			if len(files) > 0 {
@@ -313,10 +324,10 @@ func readImage(w nethttp.ResponseWriter, r *nethttp.Request) ([]byte, error) {
 			}
 		}
 	}
-	data, err := io.ReadAll(io.LimitReader(src, media.MaxUploadBytes+1))
+	data, err := io.ReadAll(io.LimitReader(src, limit+1))
 	var mbe *nethttp.MaxBytesError
-	if errors.As(err, &mbe) || len(data) > media.MaxUploadBytes {
-		return nil, apperr.New(nethttp.StatusRequestEntityTooLarge, "image_too_large", "the image is too large (5 MiB at most)")
+	if errors.As(err, &mbe) || int64(len(data)) > limit {
+		return nil, apperr.New(nethttp.StatusRequestEntityTooLarge, "image_too_large", tooLarge)
 	}
 	if err != nil {
 		return nil, err
@@ -352,4 +363,69 @@ func (h *Handlers) deleteImage(kind networks.ImageKind) nethttp.HandlerFunc {
 		}
 		router.WriteJSON(w, nethttp.StatusOK, h.listing(r, n))
 	}
+}
+
+// PUT /v1/networks/{id}/theme: a boson-theme/1 JSON document.
+func (h *Handlers) putTheme(w nethttp.ResponseWriter, r *nethttp.Request) {
+	var raw json.RawMessage
+	if err := router.Decode(w, r, &raw); err != nil {
+		router.WriteError(w, r, err)
+		return
+	}
+	n, err := h.d.Networks.SetTheme(r.Context(), principal.From(r.Context()), r.PathValue("id"), raw)
+	if err != nil {
+		router.WriteError(w, r, err)
+		return
+	}
+	router.WriteJSON(w, nethttp.StatusOK, h.listing(r, n))
+}
+
+func (h *Handlers) deleteTheme(w nethttp.ResponseWriter, r *nethttp.Request) {
+	n, err := h.d.Networks.ClearTheme(r.Context(), principal.From(r.Context()), r.PathValue("id"))
+	if err != nil {
+		router.WriteError(w, r, err)
+		return
+	}
+	router.WriteJSON(w, nethttp.StatusOK, h.listing(r, n))
+}
+
+func themeSlot(r *nethttp.Request) (theme.Slot, error) {
+	slot, ok := theme.ParseSlot(r.PathValue("slot"))
+	if !ok {
+		return "", networks.ErrUnknownSlot
+	}
+	return slot, nil
+}
+
+func (h *Handlers) putThemeImage(w nethttp.ResponseWriter, r *nethttp.Request) {
+	slot, err := themeSlot(r)
+	if err != nil {
+		router.WriteError(w, r, err)
+		return
+	}
+	data, err := readUpload(w, r, media.MaxAssetBytes, "the image is too large (2 MB at most)")
+	if err != nil {
+		router.WriteError(w, r, err)
+		return
+	}
+	n, err := h.d.Networks.SetThemeImage(r.Context(), principal.From(r.Context()), r.PathValue("id"), slot, data)
+	if err != nil {
+		router.WriteError(w, r, err)
+		return
+	}
+	router.WriteJSON(w, nethttp.StatusOK, h.listing(r, n))
+}
+
+func (h *Handlers) deleteThemeImage(w nethttp.ResponseWriter, r *nethttp.Request) {
+	slot, err := themeSlot(r)
+	if err != nil {
+		router.WriteError(w, r, err)
+		return
+	}
+	n, err := h.d.Networks.SetThemeImage(r.Context(), principal.From(r.Context()), r.PathValue("id"), slot, nil)
+	if err != nil {
+		router.WriteError(w, r, err)
+		return
+	}
+	router.WriteJSON(w, nethttp.StatusOK, h.listing(r, n))
 }

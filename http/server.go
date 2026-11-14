@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io/fs"
 	nethttp "net/http"
+	"path"
 	"strings"
 	"time"
 
@@ -138,6 +139,7 @@ func Build(ctx context.Context, cfg config.Config, opts Options) (*App, error) {
 		Options: networks.Options{
 			TokenTTL: vc.TokenTTL, LapseAfter: vc.LapseAfter, VerifiedEvery: vc.VerifiedEvery,
 			PendingEvery: vc.PendingEvery, LapsedEvery: vc.LapsedEvery, OwnerRateLimit: vc.OwnerRateLimit, Now: opts.Now,
+			AllowHTTPImages: !cfg.AppConfig.IsProduction(),
 		},
 	})
 	locker := opts.Locker
@@ -302,13 +304,22 @@ func withCSP(csp string, h nethttp.Handler) nethttp.Handler {
 func mediaHandler(fsys fs.FS) nethttp.Handler {
 	files := nethttp.StripPrefix("/media/", nethttp.FileServerFS(fsys))
 	return nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
-		if strings.HasSuffix(r.URL.Path, "/") || !strings.HasSuffix(r.URL.Path, ".png") {
+		ext := strings.TrimPrefix(path.Ext(r.URL.Path), ".")
+		ct, ok := media.AssetTypes[ext]
+		if strings.HasSuffix(r.URL.Path, "/") || !ok {
 			nethttp.NotFound(w, r)
 			return
 		}
 		h := w.Header()
+		h.Set("Content-Type", ct)
+		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("Cache-Control", "public, max-age=31536000, immutable")
-		h.Set("Content-Security-Policy", "default-src 'none'; sandbox")
+		csp := "default-src 'none'; sandbox"
+		if ext == "svg" {
+			// Theme logos: inline styles render, nothing else loads or runs.
+			csp = "default-src 'none'; style-src 'unsafe-inline'; sandbox"
+		}
+		h.Set("Content-Security-Policy", csp)
 		h.Set("Access-Control-Allow-Origin", "*")
 		h.Set("Cross-Origin-Resource-Policy", "cross-origin")
 		files.ServeHTTP(w, r)

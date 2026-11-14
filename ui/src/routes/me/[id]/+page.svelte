@@ -13,6 +13,7 @@
 	import NetworkForm from '$lib/components/NetworkForm.svelte';
 	import DnsSteps from '$lib/components/DnsSteps.svelte';
 	import ImageField from '$lib/components/ImageField.svelte';
+	import ThemeEditor from '$lib/components/ThemeEditor.svelte';
 	import Confirm from '$lib/components/Confirm.svelte';
 	import Time from '$lib/components/Time.svelte';
 
@@ -150,6 +151,19 @@
 				<ImageField bind:listing which="icon" />
 				<ImageField bind:listing which="banner" />
 			</div>
+		</section>
+
+		<section class="section" aria-labelledby="theme-h">
+			<div class="section-head">
+				<h2 id="theme-h">Theme</h2>
+				<p>
+					Your network’s colours, logo and backgrounds: on its card and page here, and in Boson when people
+					connect or sign in.
+				</p>
+			</div>
+			{#key n.id}
+				<ThemeEditor bind:listing />
+			{/key}
 		</section>
 
 		<section class="section" aria-labelledby="form-h">

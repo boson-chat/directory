@@ -1,3 +1,5 @@
+import type { BosonTheme } from './theme';
+
 // Shapes of the directory API (/v1), as agreed in the directory plan.
 // Fields marked "assumed" are this UI's reading of the contract where the
 // plan leaves the exact name open; the typed client is the one place to
@@ -22,6 +24,8 @@ export interface Network {
 	auth_url?: string | null;
 	icon_url?: string | null;
 	banner_url?: string | null;
+	/** The network's boson-theme/1 branding (absolute image URLs); null when it has none. */
+	theme?: BosonTheme | null;
 	status: NetworkStatus;
 	/** Same as `status`, for clients written against /servers. */
 	verification_status?: NetworkStatus;

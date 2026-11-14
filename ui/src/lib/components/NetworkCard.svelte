@@ -1,22 +1,27 @@
 <script lang="ts">
 	import type { Network } from '$lib/types';
 	import { address, joinUrl, langName, originLabel } from '$lib/links';
+	import { listingAccent, listingStyle, readTheme } from '$lib/theme';
 	import NetworkIcon from './NetworkIcon.svelte';
 	import Health from './Health.svelte';
 
 	let { network: n }: { network: Network } = $props();
 	let bannerFailed = $state(false);
+	// The network's own colours, where they read (see listingStyle).
+	let theme = $derived(readTheme(n.theme));
+	let style = $derived(listingStyle(theme));
+	let accent = $derived(listingAccent(theme));
 </script>
 
-<article class="card" aria-labelledby="nc-{n.id}">
-	<div class="banner" class:empty={!n.banner_url || bannerFailed}>
+<article class="card" class:themed={!!style} aria-labelledby="nc-{n.id}" {style}>
+	<div class="banner" class:empty={!n.banner_url || bannerFailed} class:tinted={!!accent}>
 		{#if n.banner_url && !bannerFailed}
 			<img src={n.banner_url} alt="" loading="lazy" onerror={() => (bannerFailed = true)} />
 		{/if}
 	</div>
 	<div class="body">
 		<div class="head">
-			<span class="ic"><NetworkIcon name={n.name} url={n.icon_url} /></span>
+			<span class="ic"><NetworkIcon name={n.name} url={n.icon_url ?? theme?.logo} /></span>
 			<div class="title">
 				<h2 id="nc-{n.id}"><a href="/n/{encodeURIComponent(n.id)}">{n.name}</a></h2>
 				<span class="addr">{address(n)}</span>
@@ -78,6 +83,20 @@
 				color-mix(in oklab, var(--border), transparent 40%) 11px 12px
 			),
 			var(--surface-raised);
+	}
+	/* no banner, but a brand accent: a wash of it instead of the hatching */
+	.banner.empty.tinted {
+		background:
+			linear-gradient(120deg, color-mix(in oklab, var(--accent), transparent 55%), transparent 75%),
+			repeating-linear-gradient(
+				135deg,
+				transparent 0 11px,
+				color-mix(in oklab, var(--accent), transparent 85%) 11px 12px
+			),
+			var(--surface-raised);
+	}
+	.themed {
+		color: var(--fg);
 	}
 	.banner img {
 		width: 100%;

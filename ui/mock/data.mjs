@@ -212,6 +212,35 @@ export const peers = [
 	}
 ];
 
+// A few listings carry a boson-theme/1 document: a full dark brand, an
+// accent-only light one, and one whose text wouldn't read (the UI keeps its
+// own surfaces for it and only takes the accent).
+const seedThemes = {
+	0: {
+		version: 1,
+		base: 'dark',
+		colors: {
+			accent: '#8b5cf6',
+			'accent-on': '#ffffff',
+			bg: '#0c0a14',
+			surface: '#13101f',
+			'surface-raised': '#1b1730',
+			'surface-hover': '#221d3b',
+			border: '#2c2547',
+			'border-soft': '#211c38',
+			fg: '#ece9f7',
+			'fg-2': '#a9a3c4'
+		},
+		logo: '/media/icon-0.svg'
+	},
+	1: { version: 1, base: 'light', colors: { accent: '#0e7490', 'accent-on': '#ffffff' } },
+	2: {
+		version: 1,
+		base: 'dark',
+		colors: { bg: '#3a3a3a', surface: '#404040', fg: '#5a5a5a', accent: '#22d3ee' }
+	}
+};
+
 export function seedNetworks() {
 	const out = [];
 	let n = 0;
@@ -241,6 +270,7 @@ export function seedNetworks() {
 				auth_url: null,
 				icon_url: i % 6 === 2 ? null : `/media/icon-${i}.svg`,
 				banner_url: i % 4 === 1 ? null : `/media/banner-${i}.svg`,
+				theme: seedThemes[i] ?? null,
 				status: 'verified',
 				origin,
 				origin_name: origin === 'local' ? null : peers.find((p) => 'peer:' + p.id === origin)?.name,
@@ -288,6 +318,25 @@ export function demoOwned() {
 			user_count: 142,
 			icon_url: '/media/icon-3.svg',
 			banner_url: '/media/banner-3.svg',
+			theme: {
+				version: 1,
+				base: 'dark',
+				colors: {
+					accent: '#10b981',
+					'accent-on': '#04120c',
+					bg: '#06100c',
+					surface: '#0a1712',
+					'surface-raised': '#10211a',
+					border: '#1c3329',
+					'border-soft': '#14281f',
+					fg: '#e3f2ea',
+					'fg-2': '#97b5a6'
+				},
+				radius: 4,
+				panes: { messages: { image: '/media/banner-3.svg', dim: 0.7, blur: 2, position: 'center' } },
+				logo: '/media/icon-3.svg',
+				login_background: '/media/banner-5.svg'
+			},
 			last_verified_at: hours(6),
 			last_checked_at: hours(6),
 			verification_token: null,

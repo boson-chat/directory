@@ -548,11 +548,15 @@ func (s *NetworkService) Update(ctx context.Context, p *principal.Principal, id 
 }
 
 func (s *NetworkService) dropImages(ctx context.Context, n *network.Network) {
+	keys := themeKeys(n)
 	for _, k := range []*string{n.IconKey, n.BannerKey} {
 		if k != nil {
-			if err := s.media.Remove(ctx, *k); err != nil {
-				logger.FromCtx(ctx).Warn().Err(err).Str("key", *k).Msg("removing listing image")
-			}
+			keys = append(keys, *k)
+		}
+	}
+	for _, k := range keys {
+		if err := s.media.Remove(ctx, k); err != nil {
+			logger.FromCtx(ctx).Warn().Err(err).Str("key", k).Msg("removing listing image")
 		}
 	}
 }

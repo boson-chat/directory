@@ -1,6 +1,7 @@
 // Typed client for the directory API (/v1, same origin).
 
 import { auth } from './auth.svelte';
+import type { BosonTheme, ImageSlot } from './theme';
 import type {
 	AdminNetworkPage,
 	AuditPage,
@@ -154,6 +155,15 @@ export const directory = {
 		call<Listing>('PUT', `/v1/networks/${id(netId)}/${which}`, { blob: file, authed: true }),
 	deleteImage: (netId: string, which: 'icon' | 'banner') =>
 		call<Listing>('DELETE', `/v1/networks/${id(netId)}/${which}`, { authed: true }),
+	/** Image fields omitted or null keep their current image; "" removes one. */
+	putTheme: (netId: string, theme: BosonTheme) =>
+		call<Listing>('PUT', `/v1/networks/${id(netId)}/theme`, { body: theme, authed: true }),
+	deleteTheme: (netId: string) =>
+		call<Listing>('DELETE', `/v1/networks/${id(netId)}/theme`, { authed: true }),
+	putThemeImage: (netId: string, slot: ImageSlot, file: Blob) =>
+		call<Listing>('PUT', `/v1/networks/${id(netId)}/theme-images/${slot}`, { blob: file, authed: true }),
+	deleteThemeImage: (netId: string, slot: ImageSlot) =>
+		call<Listing>('DELETE', `/v1/networks/${id(netId)}/theme-images/${slot}`, { authed: true }),
 
 	// ---- operator (directory.manage) ----
 	peers: () => call<{ peers: Peer[] }>('GET', '/v1/admin/peers', { authed: true }),
