@@ -2,6 +2,7 @@
 	import { directory } from '$lib/api';
 	import type { Listing } from '$lib/types';
 	import { toasts, errorText } from '$lib/toasts.svelte';
+	import { FileDrop } from '$lib/drop.svelte';
 	import NetworkIcon from './NetworkIcon.svelte';
 
 	/** Upload or remove a listing's icon (square) or banner (3:1). */
@@ -21,12 +22,21 @@
 			: 'Wide, 1200 × 400 works best. Up to 5 MB.'
 	);
 
-	async function picked(e: Event) {
-		const f = (e.currentTarget as HTMLInputElement).files?.[0];
-		(e.currentTarget as HTMLInputElement).value = '';
-		if (!f) return;
+	function picked(e: Event) {
+		const el = e.currentTarget as HTMLInputElement;
+		const f = el.files?.[0];
+		el.value = '';
+		if (f) void upload(f);
+	}
+	const drop = new FileDrop(
+		(f) => void upload(f),
+		() => busy
+	);
+
+	async function upload(f: File) {
+		if (busy) return;
 		error = '';
-		if (!TYPES.includes(f.type)) return void (error = 'Use a PNG, JPEG, WebP or GIF image.');
+		if (!TYPES.includes(f.type)) return void (error = "That's not a PNG, JPEG, WebP or GIF image.");
 		if (f.size > MAX)
 			return void (error = `That file is ${(f.size / 1048576).toFixed(1)} MB; the limit is 5 MB.`);
 		busy = true;
@@ -53,7 +63,7 @@
 	}
 </script>
 
-<div class="img {which}">
+<div class="img {which}" class:over={drop.over} {@attach drop.attach}>
 	<div class="preview" aria-hidden="true">
 		{#if which === 'icon'}
 			<NetworkIcon name={network.name} {url} size={72} />
@@ -87,6 +97,7 @@
 			{#if url}<button class="btn btn-small btn-ghost" type="button" disabled={busy} onclick={remove}
 					>Remove</button
 				>{/if}
+			<small class="or" class:on={drop.over}>{drop.over ? 'Drop to upload' : 'or drop an image here'}</small>
 		</div>
 		{#if error}<small class="err" role="alert">{error}</small>{/if}
 	</div>
@@ -98,6 +109,13 @@
 		gap: var(--space-4);
 		align-items: flex-start;
 		min-width: 0;
+		border-radius: var(--radius-md);
+	}
+	.img.over {
+		background: var(--accent-dim);
+		box-shadow: 0 0 0 var(--space-2) var(--accent-dim);
+		outline: 1px dashed var(--accent);
+		outline-offset: var(--space-2);
 	}
 	.banner {
 		flex-direction: column;
@@ -152,7 +170,13 @@
 	}
 	.btns {
 		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
 		gap: var(--space-2);
 		margin-top: var(--space-2);
+	}
+	.or.on {
+		color: var(--accent-text);
+		font-weight: 600;
 	}
 </style>
