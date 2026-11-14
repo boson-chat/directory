@@ -34,6 +34,7 @@ GETs are CORS `*`.
   "id": "net_01J…", "hostname": "irc.example.org", "port": 6697, "tls": true,
   "name": "Example", "description": "", "tags": ["foss"], "languages": ["en"], "is_nsfw": false,
   "website_url": "https://example.org", "auth_url": null, "icon_url": "…", "banner_url": "…",
+  "theme": {"version": 1, "base": "dark", "colors": {"accent": "#7c3aed"}, "logo": "https://…"} | null,
   "status": "verified", "verification_status": "verified",
   "last_verified_at": "…", "last_checked_at": "…",
   "health_status": "up", "health_checked_at": "…", "user_count": 42, "user_count_at": "…",
@@ -84,8 +85,39 @@ only deleted or moderated by operators. Writes are rate limited per IP (429 `rat
 | `POST /v1/networks/{id}/regenerate-token` | Listing (back to `pending`, new token, new 72 h window) |
 | `PUT /v1/networks/{id}/icon` · `/banner` | raw image body (PNG/JPEG/GIF/WebP, ≤5 MiB) or multipart → Listing. Icon 256², banner 1200×400, cover-cropped. 413 `image_too_large`, 400 `unsupported_image`. |
 | `DELETE /v1/networks/{id}/icon` · `/banner` | Listing |
+| `PUT /v1/networks/{id}/theme` | JSON body: a [boson-theme/1](#listing-themes) document → Listing. 400 `invalid_theme`. |
+| `DELETE /v1/networks/{id}/theme` | Listing (theme `null`, uploaded theme images removed) |
+| `PUT /v1/networks/{id}/theme-images/{slot}` | slot `logo` · `logo_wide` · `login_background` · `pane-servers` · `pane-channels` · `pane-messages` · `pane-members`; raw image body or multipart (PNG/JPEG/GIF/WebP/SVG, ≤2 MB, ≤4096 px a side; not cropped) → Listing with the URL in `theme`. 413 `image_too_large`, 400 `unsupported_image`, 400 `unsafe_svg`, 404 `unknown_slot`. |
+| `DELETE /v1/networks/{id}/theme-images/{slot}` | Listing |
 
 Wrong owner: 403 `not_owner` for a public (verified) listing, 404 for one you can't see.
+
+### Listing themes
+
+`theme` is the network's boson-theme/1 branding, the same document the stack serves at
+`/v1/branding` and the client applies when connected:
+
+```json
+{"version": 1, "base": "dark",
+ "colors": {"accent": "#7c3aed", "bg": "#0b0b10"},
+ "nick": {"saturation": 62, "lightness": 64}, "radius": 2, "font": "boson",
+ "panes": {"servers": {"bg": "#0b0b10"},
+           "messages": {"image": "https://…", "dim": 0.7, "blur": 8, "position": "center"}},
+ "logo": "https://…", "logo_wide": "https://…", "login_background": "https://…"}
+```
+
+- `colors` keys are the client's theme tokens (`bg surface surface-raised surface-hover border
+  border-soft fg fg-2 fg-3 muted meta accent accent-on success warn danger info`); others are
+  dropped. Colours are `#rrggbb` (stored lowercase).
+- `base` dark|light (default dark), `nick.*` 0–100, `radius` 0–12, `font` boson|system; panes
+  `servers|channels|messages|members` with `bg`, `image`, `dim` 0–1, `blur` 0–24, `position`
+  center|top|bottom|left|right. Unknown keys are dropped; at most 16 KB.
+- Images are uploaded per slot (above) and stored on this directory's media host. In `PUT
+  /theme` an image field that is omitted or `null` keeps the current image, `""` removes it, the
+  URL `GET` returned keeps it, and any other https URL is hot-linked as is (how a stack pushes
+  its `/v1/branding` assets with its Network key). http URLs only outside production.
+- The federation feed carries `theme`; peers validate it again and hot-link its images, like
+  icons and banners. An invalid theme is dropped (the listing is still imported).
 
 ### Operator (`directory.manage`, or `X-Internal-Token: $DIRECTORY_INTERNAL_TOKEN` + `X-Acting-User: <name>`)
 

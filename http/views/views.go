@@ -4,11 +4,13 @@
 package views
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/boson-chat/directory/internal/db/repositories/network"
 	"github.com/boson-chat/directory/internal/services/dnsverify"
 	"github.com/boson-chat/directory/internal/services/media"
+	"github.com/boson-chat/directory/internal/services/theme"
 )
 
 // Network is the public JSON of a listing.
@@ -26,6 +28,9 @@ type Network struct {
 	AuthURL     *string  `json:"auth_url,omitempty"`
 	IconURL     string   `json:"icon_url,omitempty"`
 	BannerURL   string   `json:"banner_url,omitempty"`
+	// Theme is the listing's boson-theme/1 document with absolute image
+	// URLs; null when it has none.
+	Theme json.RawMessage `json:"theme"`
 	// LegacyID is the listing's id on the legacy boson API directory (a
 	// uuid), for rows imported from it: clients match servers saved under it.
 	LegacyID *string `json:"legacy_id,omitempty"`
@@ -107,6 +112,7 @@ func NewNetwork(n *network.Network, m media.MediaServiceImpl) Network {
 	}
 	if m != nil {
 		out.IconURL, out.BannerURL = m.URLFor(deref(n.IconKey)), m.URLFor(deref(n.BannerKey))
+		out.Theme = theme.RenderJSON(n.Theme, m.URLFor)
 	}
 	return out
 }

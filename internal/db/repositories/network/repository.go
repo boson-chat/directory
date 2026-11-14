@@ -385,7 +385,7 @@ func (r *NetworkRepository) UnblockMatching(ctx context.Context, pattern string,
 
 // upsertColumns are the public fields a peer import may set.
 var upsertColumns = []string{"hostname", "port", "tls", "name", "description", "tags", "languages", "is_nsfw",
-	"website_url", "auth_url", "icon_key", "banner_key"}
+	"website_url", "auth_url", "icon_key", "banner_key", "theme"}
 
 func (r *NetworkRepository) UpsertByOrigin(ctx context.Context, n *Network) (UpsertResult, error) {
 	if n.Origin == "" || n.Origin == OriginLocal || n.OriginID == nil || *n.OriginID == "" {

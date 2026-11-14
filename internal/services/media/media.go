@@ -49,6 +49,9 @@ type MediaServiceImpl interface {
 	Process(ctx context.Context, namespace, id string, raw []byte, prevKey string, width, height int) (string, error)
 	// Store saves already-processed bytes under key (imports).
 	Store(ctx context.Context, key string, data []byte, contentType string) error
+	// StoreAsset saves a prepared theme image under
+	// <namespace>/<name>-<hash>.<ext> and returns the key.
+	StoreAsset(ctx context.Context, namespace, name string, a *Asset) (string, error)
 	Remove(ctx context.Context, key string) error
 	// URLFor is the public URL of key. Keys that are absolute URLs
 	// (imported listings) are returned as they are.

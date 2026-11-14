@@ -24,6 +24,7 @@ import (
 	"github.com/boson-chat/directory/internal/db/repositories/network"
 	"github.com/boson-chat/directory/internal/principal"
 	"github.com/boson-chat/directory/internal/services/dnsverify"
+	"github.com/boson-chat/directory/internal/services/theme"
 )
 
 // Client-facing errors.
@@ -119,6 +120,14 @@ type NetworkServiceImpl interface {
 	RegenerateToken(ctx context.Context, p *principal.Principal, id string) (*network.Network, error)
 	// SetImage stores (raw != nil) or clears an icon/banner.
 	SetImage(ctx context.Context, p *principal.Principal, id string, kind ImageKind, raw []byte) (*network.Network, error)
+	// SetTheme replaces the listing's boson-theme/1 document (raw JSON).
+	// Image fields: omitted or null keeps the current image, "" removes it,
+	// the URL GET returned keeps it, any other https URL hot-links it.
+	SetTheme(ctx context.Context, p *principal.Principal, id string, raw []byte) (*network.Network, error)
+	// ClearTheme removes the theme and its uploaded images.
+	ClearTheme(ctx context.Context, p *principal.Principal, id string) (*network.Network, error)
+	// SetThemeImage stores (raw != nil) or clears the image of slot.
+	SetThemeImage(ctx context.Context, p *principal.Principal, id string, slot theme.Slot, raw []byte) (*network.Network, error)
 	// Moderate is the operator's block | unblock | recheck of one listing
 	// (any origin). recheck returns the DNS report.
 	Moderate(ctx context.Context, p *principal.Principal, id string, action ModerationAction, reason string) (*network.Network, *dnsverify.Report, error)
@@ -161,5 +170,7 @@ type Options struct {
 	PendingEvery   time.Duration
 	LapsedEvery    time.Duration
 	OwnerRateLimit time.Duration
-	Now            func() time.Time
+	// AllowHTTPImages accepts http:// theme image URLs (not production).
+	AllowHTTPImages bool
+	Now             func() time.Time
 }

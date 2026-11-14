@@ -1,6 +1,7 @@
 package federation
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
@@ -11,33 +12,40 @@ import (
 	"github.com/boson-chat/directory/internal/db/repositories/network"
 	"github.com/boson-chat/directory/internal/hostname"
 	"github.com/boson-chat/directory/internal/services/networks"
+	"github.com/boson-chat/directory/internal/services/theme"
 )
 
 // Feed paging.
 const (
 	DefaultFeedLimit = 500
 	MaxFeedLimit     = 1000
+	// MaxFeedThemeBytes ends a page early once its themes add up to this
+	// (up to 16 KB each), so a page stays well under a peer's response
+	// cap (DIRECTORY_PEER_MAX_BYTES, 8 MiB).
+	MaxFeedThemeBytes = 3 << 20
 )
 
 // FeedNetwork is the public part of a listing as GET /v1/feed exports it.
 // Owner data (account, network key hash) and probe bookkeeping are never
 // exported; peers run their own DNS and health checks.
 type FeedNetwork struct {
-	ID          string     `json:"id"`
-	Hostname    string     `json:"hostname,omitempty"`
-	Port        int        `json:"port,omitempty"`
-	TLS         bool       `json:"tls"`
-	Name        string     `json:"name,omitempty"`
-	Description string     `json:"description,omitempty"`
-	Tags        []string   `json:"tags,omitempty"`
-	Languages   []string   `json:"languages,omitempty"`
-	IsNSFW      bool       `json:"is_nsfw"`
-	WebsiteURL  *string    `json:"website_url,omitempty"`
-	AuthURL     *string    `json:"auth_url,omitempty"`
-	IconURL     *string    `json:"icon_url,omitempty"`
-	BannerURL   *string    `json:"banner_url,omitempty"`
-	CreatedAt   *time.Time `json:"created_at,omitempty"`
-	UpdatedAt   *time.Time `json:"updated_at,omitempty"`
+	ID          string   `json:"id"`
+	Hostname    string   `json:"hostname,omitempty"`
+	Port        int      `json:"port,omitempty"`
+	TLS         bool     `json:"tls"`
+	Name        string   `json:"name,omitempty"`
+	Description string   `json:"description,omitempty"`
+	Tags        []string `json:"tags,omitempty"`
+	Languages   []string `json:"languages,omitempty"`
+	IsNSFW      bool     `json:"is_nsfw"`
+	WebsiteURL  *string  `json:"website_url,omitempty"`
+	AuthURL     *string  `json:"auth_url,omitempty"`
+	IconURL     *string  `json:"icon_url,omitempty"`
+	BannerURL   *string  `json:"banner_url,omitempty"`
+	// Theme is the listing's boson-theme/1 document, image URLs absolute.
+	Theme     json.RawMessage `json:"theme,omitempty"`
+	CreatedAt *time.Time      `json:"created_at,omitempty"`
+	UpdatedAt *time.Time      `json:"updated_at,omitempty"`
 }
 
 // FeedChange is one entry of the feed. A deleted entry carries only the
@@ -67,7 +75,12 @@ type FeedPage struct {
 // exported as deleted, so peers drop it.
 func buildFeed(changes []network.Change, since int64, limit int, mediaURL func(string) string) *FeedPage {
 	page := &FeedPage{Changes: []FeedChange{}, NextSince: since, HasMore: len(changes) >= limit}
-	for _, c := range changes {
+	themeBytes := 0
+	for i, c := range changes {
+		if themeBytes >= MaxFeedThemeBytes && i > 0 {
+			page.HasMore = true
+			break
+		}
 		page.NextSince = c.Seq
 		switch {
 		case c.Deleted != nil:
@@ -92,6 +105,8 @@ func buildFeed(changes []network.Change, since int64, limit int, mediaURL func(s
 				continue
 			}
 			created, updated := n.CreatedAt.UTC(), n.UpdatedAt.UTC()
+			th := theme.RenderJSON(n.Theme, mediaURL)
+			themeBytes += len(th)
 			page.Changes = append(page.Changes, FeedChange{
 				Seq: c.Seq, VerificationToken: n.VerificationToken,
 				Network: FeedNetwork{
@@ -99,6 +114,7 @@ func buildFeed(changes []network.Change, since int64, limit int, mediaURL func(s
 					Description: n.Description, Tags: n.Tags, Languages: n.Languages, IsNSFW: n.IsNSFW,
 					WebsiteURL: n.WebsiteURL, AuthURL: n.AuthURL,
 					IconURL: mediaURLPtr(n.IconKey, mediaURL), BannerURL: mediaURLPtr(n.BannerKey, mediaURL),
+					Theme:     th,
 					CreatedAt: &created, UpdatedAt: &updated,
 				},
 			})
@@ -198,6 +214,20 @@ func imageURL(v *string, strict bool) (*string, error) {
 		return nil, errors.New("must be an https:// URL")
 	}
 	return &t, nil
+}
+
+// importedTheme validates a peer's theme with the same rules as an owner's
+// write. Image fields must be absolute URLs (https in production): an
+// imported listing hot-links its images, like its icon and banner.
+func importedTheme(raw json.RawMessage, strict bool) (network.JSONB, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil, nil
+	}
+	t, err := theme.Parse(raw, theme.Options{AllowHTTP: !strict})
+	if err != nil {
+		return nil, err
+	}
+	return t.Encode(), nil
 }
 
 func trunc(s string) string {

@@ -73,6 +73,26 @@ func call(t *testing.T, method, u, token, body string, out any) int {
 	return resp.StatusCode
 }
 
+// send is an owner write with a Network key; body is sent as contentType.
+func send(t *testing.T, method, u, key, contentType, body string) int {
+	t.Helper()
+	req, _ := http.NewRequest(method, u, strings.NewReader(body))
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
+	}
+	req.Header.Set("Authorization", "Network "+key)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		raw, _ := io.ReadAll(resp.Body)
+		t.Logf("%s %s: %d %s", method, u, resp.StatusCode, raw)
+	}
+	return resp.StatusCode
+}
+
 func eventually(t *testing.T, what string, timeout time.Duration, f func() bool) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
@@ -233,6 +253,63 @@ func TestTwoDirectories(t *testing.T) {
 	eventually(t, "beta verified on B", time.Minute, func() bool {
 		s, _ := w.onB("irc.beta.test")
 		return s == "verified"
+	})
+
+	t.Log("theme: alpha's owner (a Network key, like a stack) sets a theme and a logo on A; B imports both")
+	const key = "e2e-stack-network-key-0123456789abcdef"
+	w.exec(w.dbA, "UPDATE networks SET management_key_hash = encode(sha256(convert_to($1, 'UTF8')), 'hex') WHERE hostname = 'irc.alpha.test'", key)
+	alphaA := "/v1/networks/net_01E2E00000000000000000000A"
+	if code := send(t, "PUT", urlA+alphaA+"/theme", key, "application/json",
+		`{"version":1,"base":"dark","colors":{"accent":"#7C3AED","bg":"#0b0b10"},"panes":{"messages":{"dim":0.6,"blur":4}},"login_background":"https://cdn.example/bg.webp"}`); code != 200 {
+		t.Fatalf("PUT theme on A: %d", code)
+	}
+	if code := send(t, "PUT", urlA+alphaA+"/theme-images/logo", key, "image/svg+xml",
+		`<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><rect width="8" height="8" fill="#7c3aed"/></svg>`); code != 200 {
+		t.Fatalf("PUT logo on A: %d", code)
+	}
+	var onB struct {
+		Network struct {
+			Theme struct {
+				Colors          map[string]string `json:"colors"`
+				Logo            string            `json:"logo"`
+				LoginBackground string            `json:"login_background"`
+				Panes           struct {
+					Messages struct {
+						Dim float64 `json:"dim"`
+					} `json:"messages"`
+				} `json:"panes"`
+			} `json:"theme"`
+		} `json:"network"`
+	}
+	eventually(t, "alpha's theme on B", time.Minute, func() bool {
+		w.syncB(mainID)
+		call(t, "GET", urlB+"/v1/networks/lookup?hostname=irc.alpha.test", "", "", &onB)
+		return strings.HasPrefix(onB.Network.Theme.Logo, "http://dir-a:8080/media/network-themes/net_01E2E00000000000000000000A-logo-")
+	})
+	if th := onB.Network.Theme; th.Colors["accent"] != "#7c3aed" || th.LoginBackground != "https://cdn.example/bg.webp" || th.Panes.Messages.Dim != 0.6 {
+		t.Fatalf("theme on B: %+v", th)
+	}
+	// B hot-links A's copy: A serves it as an SVG image, sandboxed.
+	logo, err := http.Get(strings.Replace(onB.Network.Theme.Logo, "http://dir-a:8080", urlA, 1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	logo.Body.Close()
+	if logo.StatusCode != 200 || logo.Header.Get("Content-Type") != "image/svg+xml" || logo.Header.Get("X-Content-Type-Options") != "nosniff" ||
+		!strings.Contains(logo.Header.Get("Content-Security-Policy"), "default-src 'none'") {
+		t.Fatalf("logo on A: %d %v", logo.StatusCode, logo.Header)
+	}
+	t.Log("theme removed on A: gone on B too")
+	if code := send(t, "DELETE", urlA+alphaA+"/theme", key, "", ""); code != 200 {
+		t.Fatalf("DELETE theme on A: %d", code)
+	}
+	eventually(t, "alpha's theme gone from B", time.Minute, func() bool {
+		w.syncB(mainID)
+		var th sql.NullString
+		if err := w.dbB.QueryRow("SELECT theme::text FROM networks WHERE hostname = 'irc.alpha.test'").Scan(&th); err != nil {
+			t.Fatal(err)
+		}
+		return !th.Valid
 	})
 
 	t.Log("B never re-exports imported listings")
