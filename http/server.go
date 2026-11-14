@@ -15,6 +15,7 @@ import (
 	"github.com/boson-chat/directory/http/middleware"
 	"github.com/boson-chat/directory/http/router"
 	"github.com/boson-chat/directory/http/spa"
+	"github.com/boson-chat/directory/internal/configfile"
 	"github.com/boson-chat/directory/internal/db"
 	auditrepo "github.com/boson-chat/directory/internal/db/repositories/audit"
 	blockrepo "github.com/boson-chat/directory/internal/db/repositories/block"
@@ -29,6 +30,7 @@ import (
 	"github.com/boson-chat/directory/internal/services/media"
 	"github.com/boson-chat/directory/internal/services/networks"
 	"github.com/boson-chat/directory/internal/services/settings"
+	"github.com/boson-chat/directory/internal/services/stackconfig"
 	"github.com/boson-chat/directory/internal/services/workers"
 	"github.com/boson-chat/directory/metrics"
 	"github.com/boson-chat/directory/ui"
@@ -62,7 +64,9 @@ type App struct {
 	Public   nethttp.Handler
 	Internal nethttp.Handler
 	Workers  []workers.Worker
-	runner   *workers.Runner
+	// StackConfig applies the stack config file (BOSON_CONFIG).
+	StackConfig stackconfig.StackConfigServiceImpl
+	runner      *workers.Runner
 }
 
 // Build constructs everything: database → repositories → services →
@@ -164,6 +168,15 @@ func Build(ctx context.Context, cfg config.Config, opts Options) (*App, error) {
 		// env values; the settings API reports the database error.
 		logger.FromCtx(ctx).Warn().Err(err).Msg("settings: loading runtime settings failed; using env defaults")
 	}
+	// The stack config file, when present, replaces the database settings
+	// (before the modules start, so the builtin/file peers follow it).
+	stackConfig := stackconfig.NewStackConfigService(stackconfig.Deps{
+		Config: cfg.AppConfig, Settings: settingsService, Audit: auditService, Now: opts.Now,
+		NormalizeURL: func(u string) (string, error) { return federation.NormalizeURL(u, strict) },
+	})
+	if err := stackConfig.Load(ctx); err != nil {
+		return fail(fmt.Errorf("config file %s: %w", cfg.AppConfig.ConfigFile, err))
+	}
 
 	deps := &router.Deps{
 		Config: cfg, DB: database, NetworkRepo: networkRepo, Networks: networkService, Blocks: blockService,
@@ -192,6 +205,17 @@ func Build(ctx context.Context, cfg config.Config, opts Options) (*App, error) {
 			}
 		}
 	}
+	stackConfig.SetReloaded(func(ctx context.Context) error {
+		var errs []error
+		for _, mod := range router.Modules() {
+			if mod.ConfigReloaded != nil {
+				if err := mod.ConfigReloaded(ctx, deps); err != nil {
+					errs = append(errs, fmt.Errorf("module %s: %w", mod.Name, err))
+				}
+			}
+		}
+		return errors.Join(errs...)
+	})
 	if local != nil {
 		publicMux.Handle("GET /media/", mediaHandler(local.FS()))
 	}
@@ -229,6 +253,8 @@ func Build(ctx context.Context, cfg config.Config, opts Options) (*App, error) {
 	if opts.MetricsHandler != nil {
 		internalMux.Handle("GET /metrics", opts.MetricsHandler)
 	}
+	// Stack config file status for the admin panel (internal listener only).
+	internalMux.Handle("GET /internal/config/status", configfile.StatusHandler(stackConfig.Status))
 
 	return &App{
 		Config: cfg, DB: database, Deps: deps,
@@ -236,9 +262,10 @@ func Build(ctx context.Context, cfg config.Config, opts Options) (*App, error) {
 			middleware.Recover, middleware.ClientIP(trusted), middleware.Logging, middleware.SecurityHeaders,
 			middleware.CORS(config.SplitList(cfg.HTTPConfig.CORSAllowedOrigins)),
 			middleware.Authenticate(tokens, cfg.AuthConfig.AccessCookie, cfg.DirectoryConfig.InternalToken, router.WriteError)),
-		Internal: middleware.Chain(internalMux, middleware.Recover, middleware.ClientIP(nil), middleware.Logging),
-		Workers:  ws,
-		runner:   workers.NewRunner(locker, m),
+		Internal:    middleware.Chain(internalMux, middleware.Recover, middleware.ClientIP(nil), middleware.Logging),
+		Workers:     ws,
+		StackConfig: stackConfig,
+		runner:      workers.NewRunner(locker, m),
 	}, nil
 }
 
@@ -291,6 +318,7 @@ func mediaHandler(fsys fs.FS) nethttp.Handler {
 // RunBackground starts the registered workers.
 func (a *App) RunBackground(ctx context.Context) {
 	a.runner.Start(ctx, a.Workers...)
+	go a.StackConfig.Run(ctx)
 }
 
 // RunWorkerOnce runs the named worker now (CLI, tests).

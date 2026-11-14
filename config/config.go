@@ -33,6 +33,14 @@ type AppConfig struct {
 	Env      string `default:"development" env:"ENV"`
 	Version  string `default:"dev" env:"VERSION"`
 	LogLevel string `default:"info" env:"LOG_LEVEL"`
+	// Stack config file (config/boson.yaml). When set and the file exists,
+	// its directory: section wins over DIRECTORY_NAME / _OPERATOR /
+	// _CONTACT / _INCLUDE_MAIN / _MAIN_PEER / _SYNC_EVERY / _PEERS and over
+	// the runtime settings in the database, and is reloaded live. Unset /
+	// missing file: env + database only.
+	ConfigFile string `env:"BOSON_CONFIG"`
+	// How often the config file's mtime is polled (besides fsnotify).
+	ConfigPoll time.Duration `default:"10s" env:"BOSON_CONFIG_POLL"`
 }
 
 // IsProduction reports ENV=production (the image default).

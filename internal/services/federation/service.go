@@ -133,7 +133,21 @@ type FederationServiceImpl interface {
 	// creates, re-points or switches off the builtin peer. enable also
 	// re-enables a builtin an operator had disabled.
 	ApplyMainSettings(ctx context.Context, pr *principal.Principal, enable bool) error
+
+	// ApplyConfigFile brings the peers in line with the stack config file
+	// (start-up and every reload; no-op in database mode): the builtin peer
+	// follows include_main / main_peer_url (re-enabled when the file says
+	// include_main: true), every directory.peers URL exists, is enabled and
+	// is marked config-managed, and a config-managed peer the file no longer
+	// lists is disabled (kept, not deleted) and released to the peers API.
+	ApplyConfigFile(ctx context.Context) error
+	// ManagedByConfigFile reports whether the stack config file owns p:
+	// the peers API refuses to change or delete it (409).
+	ManagedByConfigFile(p *peer.Peer) bool
 }
+
+// ConfigActor is the audit actor of changes made by the config file.
+const ConfigActor = "config file"
 
 // Deps are the service's collaborators.
 type Deps struct {
@@ -422,6 +436,9 @@ func (s *FederationService) UpdatePeer(ctx context.Context, pr *principal.Princi
 	if err != nil {
 		return nil, err
 	}
+	if s.ManagedByConfigFile(p) {
+		return nil, settings.ErrManagedByConfigFile
+	}
 	if u.Name != nil {
 		name, err := cleanPeerName(*u.Name)
 		if err != nil {
@@ -462,6 +479,9 @@ func (s *FederationService) DeletePeer(ctx context.Context, pr *principal.Princi
 	}
 	if p.Builtin {
 		return ErrBuiltinDelete
+	}
+	if s.ManagedByConfigFile(p) {
+		return settings.ErrManagedByConfigFile
 	}
 	var removed int64
 	err = s.d.Tx.WithTx(ctx, func(ctx context.Context) error {
@@ -569,6 +589,15 @@ func (s *FederationService) EnsurePeers(ctx context.Context) error {
 	if err := s.ensureBuiltin(ctx); err != nil {
 		return err
 	}
+	if f := s.d.Settings.File(); f != nil {
+		if err := s.ApplyConfigFile(ctx); err != nil {
+			return err
+		}
+		if f.PeersSet {
+			// directory.peers in the file replaces DIRECTORY_PEERS.
+			return nil
+		}
+	}
 	// DIRECTORY_PEERS is an initial seed: each URL is added once, so a
 	// peer the operator removes later stays removed.
 	seeded, err := s.d.Settings.SeededPeers(ctx)
@@ -606,6 +635,103 @@ func (s *FederationService) EnsurePeers(ctx context.Context) error {
 		}
 		mark = append(mark, u)
 		s.d.Audit.System(ctx, "federation", "peer.seed", audit.Target{}, map[string]any{"url": u})
+	}
+	return nil
+}
+
+func (s *FederationService) ManagedByConfigFile(p *peer.Peer) bool {
+	f := s.d.Settings.File()
+	if f == nil {
+		return false
+	}
+	if p.Builtin {
+		return f.Has(settings.FieldIncludeMain)
+	}
+	return p.ConfigManaged
+}
+
+func (s *FederationService) ApplyConfigFile(ctx context.Context) error {
+	f := s.d.Settings.File()
+	if err := s.ensureBuiltin(ctx); err != nil {
+		return err
+	}
+	if f == nil {
+		return nil
+	}
+	if f.IncludeMain != nil && *f.IncludeMain && s.includeMain() {
+		if p, err := s.MainPeer(ctx); err != nil {
+			return err
+		} else if p != nil && !p.Enabled {
+			p.Enabled = true
+			if err := s.d.Peers.Update(ctx, p, "enabled"); err != nil {
+				return err
+			}
+			s.d.Audit.System(ctx, ConfigActor, "peer.enable", audit.Target{}, map[string]any{"peer_id": p.ID, "url": p.URL, "builtin": true})
+		}
+	}
+	return s.reconcileFilePeers(ctx, f.Peers)
+}
+
+func (s *FederationService) reconcileFilePeers(ctx context.Context, urls []string) error {
+	log := logger.FromCtx(ctx)
+	all, err := s.d.Peers.List(ctx)
+	if err != nil {
+		return err
+	}
+	want := map[string]bool{}
+	for _, u := range urls {
+		want[u] = true
+	}
+	byURL := map[string]*peer.Peer{}
+	for _, p := range all {
+		byURL[p.URL] = p
+		if p.Builtin || !p.ConfigManaged || want[p.URL] {
+			continue
+		}
+		// Dropped from the file: disable, keep the row and its state.
+		wasEnabled := p.Enabled
+		p.Enabled, p.ConfigManaged = false, false
+		if err := s.d.Peers.Update(ctx, p, "enabled", "config_managed"); err != nil {
+			return err
+		}
+		meta := map[string]any{"peer_id": p.ID, "url": p.URL, "builtin": false}
+		if wasEnabled {
+			removed, err := s.dropListings(ctx, p)
+			if err != nil {
+				return err
+			}
+			meta["removed"] = removed
+		}
+		s.d.Audit.System(ctx, ConfigActor, "peer.disable", audit.Target{}, meta)
+	}
+	for _, u := range urls {
+		if s.isSelfURL(u) {
+			log.Warn().Str("url", u).Msg("config file: directory.peers lists this directory itself; skipping")
+			continue
+		}
+		p := byURL[u]
+		switch {
+		case p == nil:
+			np := &peer.Peer{URL: u, Enabled: true, ConfigManaged: true}
+			if err := s.d.Peers.Create(ctx, np); err != nil {
+				if errors.Is(err, peer.ErrExists) {
+					continue // another replica created it
+				}
+				return err
+			}
+			s.d.Audit.System(ctx, ConfigActor, "peer.add", audit.Target{}, map[string]any{"peer_id": np.ID, "url": u})
+		case p.Builtin:
+			log.Warn().Str("url", u).Msg("config file: directory.peers lists the main directory; include_main controls it")
+		case !p.Enabled || !p.ConfigManaged:
+			wasEnabled := p.Enabled
+			p.Enabled, p.ConfigManaged = true, true
+			if err := s.d.Peers.Update(ctx, p, "enabled", "config_managed"); err != nil {
+				return err
+			}
+			if !wasEnabled {
+				s.d.Audit.System(ctx, ConfigActor, "peer.enable", audit.Target{}, map[string]any{"peer_id": p.ID, "url": p.URL, "builtin": false})
+			}
+		}
 	}
 	return nil
 }

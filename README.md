@@ -9,14 +9,16 @@ the repo needs the `HARBOR_USERNAME` / `HARBOR_PASSWORD` secrets).
 directory serve                          # API + web UI on :8080, /metrics on :8081, workers
 directory migrate up|down [--all]
 directory import-legacy --from <backend DSN> [--dry-run] [--legacy-cdn-url URL [--copy-media]] [-v]
+directory export-config                  # print the directory: section for config/boson.yaml (env + database)
 ```
 
 Configuration comes from env ([.env.example](.env.example)). The directory's name, operator,
 contact, main-directory and sync settings are **runtime settings**: the env values are only their
 defaults, and the operator changes them from the stack admin panel (`PATCH /v1/admin/settings`,
 stored in the database, applied without a restart). Secrets and infrastructure (database, auth,
-internal token, media storage, limits) stay env-only. Code layout and how to add modules:
-[SKELETON.md](SKELETON.md).
+internal token, media storage, limits) stay env-only. With the [stack config
+file](#stack-config-file) (`BOSON_CONFIG`) those settings and the peer list come from its
+`directory:` section instead. Code layout and how to add modules: [SKELETON.md](SKELETON.md).
 
 ## API
 
@@ -102,8 +104,8 @@ Peers (`/v1/admin/peers…`) and the feed (`GET /v1/feed`) are the federation mo
 
 | | |
 |---|---|
-| `GET /v1/admin/settings` | see below |
-| `PATCH /v1/admin/settings` | any of `{name, operator, contact, include_main, main_peer_url, sync_every}` → same body as GET. A value overrides the env default (stored in `directory_settings`, survives restarts); `null` resets the field to the env default. Applied at once: `.well-known` and facets show the new name, and `include_main` / `main_peer_url` create, re-point, re-enable or switch off the built-in main peer (switching off removes its listings). Audited as `settings.update` (`meta.changes.<field> = {from, to, reset?}`). 400 `invalid_request` (empty `name`, `operator` > 100 / `contact` > 200 chars, `sync_every` outside 1m–168h, bad URL, empty body); 409 `is_main_directory` for `include_main: true` while the main peer URL is this directory. |
+| `GET /v1/admin/settings` | see below; `source` is `file` (stack config file) or `db` |
+| `PATCH /v1/admin/settings` | 409 `managed_by_config_file` while the [stack config file](#stack-config-file) is in use. Otherwise any of `{name, operator, contact, include_main, main_peer_url, sync_every}` → same body as GET. A value overrides the env default (stored in `directory_settings`, survives restarts); `null` resets the field to the env default. Applied at once: `.well-known` and facets show the new name, and `include_main` / `main_peer_url` create, re-point, re-enable or switch off the built-in main peer (switching off removes its listings). Audited as `settings.update` (`meta.changes.<field> = {from, to, reset?}`). 400 `invalid_request` (empty `name`, `operator` > 100 / `contact` > 200 chars, `sync_every` outside 1m–168h, bad URL, empty body); 409 `is_main_directory` for `include_main: true` while the main peer URL is this directory. |
 
 ```json
 {
@@ -115,14 +117,80 @@ Peers (`/v1/admin/peers…`) and the feed (`GET /v1/feed`) are the federation mo
   "main_active": true,
   "main_peer": {"id": "per_…", "enabled": true, "builtin": true, "active": true, "…": "peer JSON"},
   "public_url": "https://directory.example.org",
-  "updated_at": "…", "updated_by": "alice"
+  "updated_at": "…", "updated_by": "alice",
+  "source": "db",
+  "peers": ["https://dir.example.net"]
 }
 ```
+
+In file mode `overridden` lists the keys set in the file, `peers` is the file's
+`directory.peers` (omitted when that key is absent), and `updated_at` / `updated_by` are unset.
 
 `is_main` is true when the main peer URL is this directory's own URL (directory.boson.chat): it
 *is* the main directory, has no built-in peer, and `include_main` doesn't apply. `main_active`: the
 built-in peer is being synced (included, enabled, not this directory). `main_peer` is null when no
 built-in row exists.
+
+### Stack config file
+
+`BOSON_CONFIG=/config/boson.yaml` points at the boson stack's shared, non-secret config file.
+The directory reads its `directory:` section and ignores the others. While the file exists, it is
+the source of truth: **file > env > built-in default**. `directory_settings` is ignored, and the
+settings API is read-only. A key that is absent (or `null`) falls back to its env value, so removing
+a key resets it. Without `BOSON_CONFIG`, or while the file does not exist, the directory behaves
+exactly as without it.
+
+```yaml
+version: 1
+directory:
+  name: Boson directory                       # DIRECTORY_NAME
+  operator: Boson                             # DIRECTORY_OPERATOR
+  contact: hi@example.com                     # DIRECTORY_CONTACT
+  include_main: true                          # DIRECTORY_INCLUDE_MAIN
+  main_peer_url: https://directory.boson.chat # DIRECTORY_MAIN_PEER ("" = no main directory)
+  sync_every: 10m                             # DIRECTORY_SYNC_EVERY (1m–168h)
+  peers: [https://dir.example.net]            # replaces DIRECTORY_PEERS
+```
+
+The validation rules are the same as for `PATCH /v1/admin/settings`. Every key applies live,
+without a restart. `.well-known`, facets, the built-in main peer and the sync interval follow at
+once, and `restart_required` is always empty. The directory watches the file's directory
+(fsnotify, so an atomic tmp-file + rename write is seen). It also polls the mtime every
+`BOSON_CONFIG_POLL` (10 s). Mount the **directory** (`./config:/config:ro`), not the single file:
+a bind-mounted file keeps pointing at the old inode after a rename.
+
+**Peers.** Peer state (cursor, sync times, errors, listings) stays in the database. The file only
+says which peers must be on:
+
+- Every `directory.peers` URL is created if missing, enabled, and marked
+  `managed_by_config_file` (peer JSON). That includes a peer added earlier through the API.
+- A file-managed peer is owned by the file. `PATCH` / `DELETE /v1/admin/peers/{id}` answer 409
+  `managed_by_config_file`. Sync-now still works.
+- A file-managed peer that the file no longer lists is **disabled**, not deleted. Its row and
+  state stay, and its listings go, as with any disable. It is then released to the API, so an
+  operator may re-enable or delete it. This also happens at start-up for edits made while the
+  directory was down.
+- Peers that are not in the file stay fully under the peers API, including ones added while the
+  file is in use.
+- When the file sets `include_main`, the built-in main peer is file-managed as well. It is
+  re-enabled when the file says `true`, and the API can't enable or disable it.
+- With `peers` absent, `DIRECTORY_PEERS` seeds once as before, and formerly file-managed peers are
+  disabled and released. Removing the file entirely leaves peers as they are; the API owns them
+  again.
+
+An invalid file (YAML error, bad value, wrong type) is logged with its line and column. It is
+reported by `GET /internal/config/status` on the internal listener (`:8081`):
+`{path, loaded_at, file_mtime, ok, error?, error_line?, error_column?, restart_required: []}`,
+plus `enabled` (false without `BOSON_CONFIG`) and `present`. `file_mtime` is null while the file is
+missing. The last good config stays in use. At start-up there is no last good
+config: the directory then runs on env + database values (as without the file), the status shows
+the error with `loaded_at: null`, and the first valid version is applied live. Reloads that change the section
+are audited as `config.reloaded` (actor `config file`, `meta.changed` = keys). Peer changes made
+by the file are audited as `peer.add` / `peer.enable` / `peer.disable` by `config file`.
+
+Moving an existing install to the file: `directory export-config` prints the `directory:`
+section built from the env, `directory_settings`, and the enabled non-builtin peers. Merge it
+into `config/boson.yaml`.
 
 ### Legacy `/servers`
 

@@ -27,7 +27,7 @@ var generation atomic.Uint64
 func Generation() uint64 { return generation.Load() }
 
 // labelColumns are the columns whose change bumps the generation.
-var labelColumns = map[string]bool{"name": true, "url": true, "enabled": true, "builtin": true}
+var labelColumns = map[string]bool{"name": true, "url": true, "enabled": true, "builtin": true, "config_managed": true}
 
 type PeerRepositoryImpl interface {
 	// List returns every peer, builtin first, then oldest first.

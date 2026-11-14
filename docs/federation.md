@@ -102,6 +102,10 @@ until it is reset (`null`).
   added once (remembered in `directory_settings.seeded_peers`), so a peer
   the operator removes later is not re-added on the next start. Manage
   peers at runtime with the peers API / the admin panel.
+- With the stack config file (`BOSON_CONFIG`), `directory.peers` replaces
+  `DIRECTORY_PEERS`: listed peers are kept enabled and can't be changed
+  through the peers API (409 `managed_by_config_file`), and a peer dropped
+  from the file is disabled, not deleted (README, "Stack config file").
 
 ## Safety
 
@@ -119,13 +123,14 @@ until it is reset (`null`).
 ## Configuration
 
 Settings marked *runtime* are defaults: change them in the admin panel
-(`/v1/admin/settings`), not in `.env`.
+(`/v1/admin/settings`, or the stack config file's `directory:` section
+when `BOSON_CONFIG` is set), not in `.env`.
 
 | env | default | |
 |---|---|---|
 | `DIRECTORY_MAIN_PEER` | `https://directory.boson.chat` | built-in main peer (*runtime*: `main_peer_url`) |
 | `DIRECTORY_INCLUDE_MAIN` | `true` | include it (*runtime*: `include_main`) |
-| `DIRECTORY_PEERS` | | extra peer URLs, seeded once on start |
+| `DIRECTORY_PEERS` | | extra peer URLs, seeded once on start (config file: `directory.peers`, managed continuously) |
 | `DIRECTORY_SYNC_EVERY` | `10m` | per-peer sync interval (*runtime*: `sync_every`, 1m–168h) |
 | `DIRECTORY_SYNC_ENABLED` | `true` | run the worker |
 | `DIRECTORY_PEER_TIMEOUT` | `15s` | |
@@ -145,4 +150,6 @@ Settings marked *runtime* are defaults: change them in the admin panel
   runtime settings (`settings_test.go`: include_main/main_peer_url at
   runtime, overrides vs env across restarts, is_main, seed-once, sync_every).
 - `make test-federation` — two directories, Postgres and a fake DNS/auth
-  server in docker (`test/federation`), verifying over real DNS queries.
+  server in docker (`test/federation`), verifying over real DNS queries;
+  a third (`dir-c`) runs in stack config file mode (settings and peers
+  from a mounted file, live edits, broken edit, restart).

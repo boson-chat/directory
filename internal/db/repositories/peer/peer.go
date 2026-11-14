@@ -18,9 +18,11 @@ type Peer struct {
 	// LastFullSyncAt is the last complete walk of the peer's feed (000002).
 	LastFullSyncAt *time.Time
 	// API is the peer's API base from its .well-known document (000002).
-	API       string `gorm:"column:api"`
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	API string `gorm:"column:api"`
+	// ConfigManaged: listed in the stack config file's directory.peers (000004).
+	ConfigManaged bool
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
 }
 
 func (Peer) TableName() string { return "peers" }
