@@ -65,6 +65,16 @@ jobs:
           path: ui/test-results
           retention-days: 7
 
+  federation:
+    # Two directories + Postgres + fake DNS/auth in docker (make test-federation).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: make test-federation
+
   docker:
     runs-on: ubuntu-latest
     steps:
