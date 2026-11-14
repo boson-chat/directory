@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/netip"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -43,7 +44,8 @@ type HTTPConfig struct {
 	// Internal listener (/metrics). Never expose publicly.
 	InternalAddr string `default:":8081" env:"INTERNAL_ADDR"`
 	// Externally visible base URL, e.g. https://directory.boson.chat.
-	PublicURL string `default:"http://localhost:8080" env:"PUBLIC_URL"`
+	// DIRECTORY_PUBLIC_URL; PUBLIC_URL is read as a fallback.
+	PublicURL string `env:"DIRECTORY_PUBLIC_URL"`
 	// Comma-separated CIDRs (or IPs) whose X-Forwarded-For is trusted.
 	TrustedProxies string `env:"TRUSTED_PROXIES"`
 	// Comma-separated origins allowed to make credentialed (cookie) calls.
@@ -90,6 +92,9 @@ type AuthConfig struct {
 	Audience string `default:"boson" env:"AUTH_AUDIENCE"`
 	// Cookie the auth service sets with the access token (browser flow).
 	AccessCookie string `default:"boson_at" env:"AUTH_ACCESS_COOKIE"`
+	// Browser-facing URL of the auth service (sign-in pages) for the web UI;
+	// defaults to AUTH_ISSUER.
+	PublicURL string `env:"AUTH_PUBLIC_URL"`
 }
 
 // Enabled reports whether account (bearer) auth is configured.
@@ -100,6 +105,9 @@ type DirectoryConfig struct {
 	Name     string `default:"boson directory" env:"DIRECTORY_NAME"`
 	Operator string `env:"DIRECTORY_OPERATOR"`
 	Contact  string `env:"DIRECTORY_CONTACT"`
+	// Shared secret for trusted services (the stack admin panel), sent as
+	// X-Internal-Token: grants operator access. Empty disables it.
+	InternalToken string `env:"DIRECTORY_INTERNAL_TOKEN"`
 	// Owner write requests per client IP per minute (create, edit, upload).
 	WritesPerMinute float64 `default:"30" env:"RATE_LIMIT_WRITES_PER_MINUTE"`
 	WriteBurst      int     `default:"10" env:"RATE_LIMIT_WRITE_BURST"`
@@ -145,7 +153,7 @@ type HealthConfig struct {
 // MediaConfig: icons and banners go to a local directory (served at
 // /media/) unless an S3/R2 bucket is configured.
 type MediaConfig struct {
-	Dir string `default:"./data/media" env:"MEDIA_DIR"`
+	Dir string `default:"./data/media" env:"MEDIA_DIR"` // /media in the image
 	// Base URL images are served from. Defaults to PUBLIC_URL/media (local)
 	// and is required for S3 (the bucket's public/CDN URL).
 	PublicURL   string `env:"MEDIA_PUBLIC_URL"`
@@ -191,8 +199,18 @@ func LoadConfig() (Config, error) {
 
 // ApplyDefaults fills values derived from other settings.
 func (c *Config) ApplyDefaults() {
+	if c.HTTPConfig.PublicURL == "" {
+		c.HTTPConfig.PublicURL = os.Getenv("PUBLIC_URL")
+	}
+	if c.HTTPConfig.PublicURL == "" {
+		c.HTTPConfig.PublicURL = "http://localhost:8080"
+	}
 	c.HTTPConfig.PublicURL = strings.TrimRight(c.HTTPConfig.PublicURL, "/")
 	c.AuthConfig.Issuer = strings.TrimRight(c.AuthConfig.Issuer, "/")
+	if c.AuthConfig.PublicURL == "" {
+		c.AuthConfig.PublicURL = c.AuthConfig.Issuer
+	}
+	c.AuthConfig.PublicURL = strings.TrimRight(c.AuthConfig.PublicURL, "/")
 	if c.AuthConfig.JWKSURL == "" && c.AuthConfig.Issuer != "" {
 		c.AuthConfig.JWKSURL = c.AuthConfig.Issuer + "/.well-known/jwks.json"
 	}

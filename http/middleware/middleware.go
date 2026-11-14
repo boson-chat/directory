@@ -106,7 +106,7 @@ func CORS(credentialed []string) func(nethttp.Handler) nethttp.Handler {
 				h.Set("Access-Control-Expose-Headers", "Retry-After, X-Request-Id")
 				if r.Method == nethttp.MethodOptions && r.Header.Get("Access-Control-Request-Method") != "" {
 					h.Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE")
-					h.Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Requested-With")
+					h.Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Requested-With, X-Internal-Token, X-Acting-User")
 					h.Set("Access-Control-Max-Age", "600")
 					w.WriteHeader(nethttp.StatusNoContent)
 					return

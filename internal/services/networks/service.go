@@ -262,6 +262,9 @@ func (s *NetworkService) Mine(ctx context.Context, p *principal.Principal) ([]*n
 	if p == nil {
 		return nil, ErrUnauthenticate
 	}
+	if p.Kind == principal.KindInternal {
+		return nil, errInternalOwner
+	}
 	f := network.ListFilter{AnyStatus: true, IncludeNSFW: true, Sort: network.SortNewest, Limit: 500}
 	if p.Kind == principal.KindNetworkKey {
 		f.KeyHash = p.KeyHash
@@ -360,9 +363,14 @@ func NewToken() string {
 	return base64.RawURLEncoding.EncodeToString(b)
 }
 
+var errInternalOwner = apperr.New(403, "forbidden", "an internal token can't own listings; register with a Network key or an account")
+
 func (s *NetworkService) Create(ctx context.Context, p *principal.Principal, sub Submission) (*CreateResult, error) {
 	if p == nil {
 		return nil, ErrUnauthenticate
+	}
+	if p.Kind == principal.KindInternal {
+		return nil, errInternalOwner
 	}
 	host, err := hostname.Normalize(sub.Hostname)
 	if err != nil {
@@ -787,4 +795,58 @@ func (s *NetworkService) VerifyDue(ctx context.Context) (int, error) {
 		}
 	}
 	return checked, nil
+}
+
+func (s *NetworkService) Moderate(ctx context.Context, p *principal.Principal, id string, action ModerationAction, reason string) (*network.Network, *dnsverify.Report, error) {
+	if !p.IsOperator() {
+		return nil, nil, apperr.New(403, "forbidden", "this needs the directory.manage permission")
+	}
+	n, err := s.repo.Get(ctx, id)
+	if err != nil {
+		return nil, nil, mapRepo(err)
+	}
+	meta := map[string]any{"from": n.Status}
+	if reason = strings.TrimSpace(reason); reason != "" {
+		meta["reason"] = reason
+	}
+	switch action {
+	case ModerateBlock:
+		if n.Status != network.StatusBlocked {
+			n.Status = network.StatusBlocked
+			if err := s.repo.Update(ctx, n, "status"); err != nil {
+				return nil, nil, mapRepo(err)
+			}
+		}
+	case ModerateUnblock:
+		if n.Status == network.StatusBlocked {
+			if b, err := s.blocks.Match(ctx, n.Hostname); err != nil {
+				return nil, nil, err
+			} else if b != nil {
+				return nil, nil, apperr.New(409, "blocked_by_pattern", "the hostname matches the block "+b.Pattern+"; remove that block instead")
+			}
+			n.Status = network.StatusPending
+			if n.LastVerifiedAt != nil {
+				n.Status = network.StatusLapsed
+			}
+			n.LastCheckedAt = nil
+			if err := s.repo.Update(ctx, n, "status", "last_checked_at"); err != nil {
+				return nil, nil, mapRepo(err)
+			}
+		}
+	case ModerateRecheck:
+		if n.Status == network.StatusBlocked {
+			return nil, nil, ErrBlocked
+		}
+		n, report, err := s.check(ctx, n)
+		if err != nil {
+			return nil, nil, err
+		}
+		meta["success"] = report.Success
+		s.audit.Record(ctx, p, "network.recheck", target(n), meta)
+		return n, &report, nil
+	default:
+		return nil, nil, apperr.Invalid("action must be block, unblock or recheck")
+	}
+	s.audit.Record(ctx, p, "network."+string(action), target(n), meta)
+	return n, nil, nil
 }

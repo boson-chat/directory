@@ -215,7 +215,7 @@ func Build(ctx context.Context, cfg config.Config, opts Options) (*App, error) {
 		Public: middleware.Chain(publicMux,
 			middleware.Recover, middleware.ClientIP(trusted), middleware.Logging, middleware.SecurityHeaders,
 			middleware.CORS(config.SplitList(cfg.HTTPConfig.CORSAllowedOrigins)),
-			middleware.Authenticate(tokens, cfg.AuthConfig.AccessCookie, router.WriteError)),
+			middleware.Authenticate(tokens, cfg.AuthConfig.AccessCookie, cfg.DirectoryConfig.InternalToken, router.WriteError)),
 		Internal: middleware.Chain(internalMux, middleware.Recover, middleware.ClientIP(nil), middleware.Logging),
 		Workers:  ws,
 		runner:   workers.NewRunner(locker, m),

@@ -142,7 +142,7 @@ func RequireAccount(h nethttp.Handler) nethttp.Handler {
 func RequirePerm(perm string, h nethttp.Handler) nethttp.Handler {
 	return nethttp.HandlerFunc(func(w nethttp.ResponseWriter, req *nethttp.Request) {
 		p := principal.From(req.Context())
-		if p == nil || p.Kind != principal.KindAccount {
+		if p == nil || (p.Kind != principal.KindAccount && p.Kind != principal.KindInternal) {
 			WriteError(w, req, ErrUnauthenticated)
 			return
 		}

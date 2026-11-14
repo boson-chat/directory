@@ -15,6 +15,10 @@ const (
 	KindAccount Kind = "account"
 	// KindNetworkKey is "Authorization: Network <key>".
 	KindNetworkKey Kind = "network_key"
+	// KindInternal is a trusted service (the stack admin panel) presenting
+	// X-Internal-Token: an operator with every permission. Username is the
+	// X-Acting-User it names, for the audit log.
+	KindInternal Kind = "internal"
 )
 
 // Well-known permissions from the token's perms claim.
@@ -39,7 +43,13 @@ type Principal struct {
 
 // Has reports whether the account holds perm.
 func (p *Principal) Has(perm string) bool {
-	return p != nil && p.Kind == KindAccount && slices.Contains(p.Perms, perm)
+	if p == nil {
+		return false
+	}
+	if p.Kind == KindInternal {
+		return true
+	}
+	return p.Kind == KindAccount && slices.Contains(p.Perms, perm)
 }
 
 // IsOperator reports directory.manage.
@@ -49,6 +59,9 @@ func (p *Principal) IsOperator() bool { return p.Has(PermDirectoryManage) }
 func (p *Principal) ActorID() string {
 	if p == nil {
 		return ""
+	}
+	if p.Kind == KindInternal {
+		return "internal:" + p.Username
 	}
 	if p.Kind == KindNetworkKey {
 		if len(p.KeyHash) > 12 {

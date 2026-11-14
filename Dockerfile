@@ -14,18 +14,19 @@ RUN go mod download
 COPY . .
 COPY --from=ui /ui/build ./ui/build
 ARG TARGETOS TARGETARCH VERSION=dev
-RUN touch ui/build/.gitkeep && CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
+RUN mkdir -p /out/media && touch ui/build/.gitkeep && CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
     go build -trimpath -ldflags="-s -w" -o /out/directory ./cmd
 
 FROM gcr.io/distroless/static-debian12:nonroot
 WORKDIR /app
 COPY --from=builder --chown=65532:65532 /out/directory .
+COPY --from=builder --chown=65532:65532 /out/media /media
 
 ARG VERSION=dev
-ENV VERSION=$VERSION ENV=production MEDIA_DIR=/data/media
+ENV VERSION=$VERSION ENV=production MEDIA_DIR=/media
 
 # Local media (icons/banners) when no S3 bucket is configured: mount a volume.
-VOLUME /data
+VOLUME /media
 # 8080: API + web UI (behind the reverse proxy). 8081: /metrics, /healthz (never publish).
 EXPOSE 8080 8081
 USER 65532:65532

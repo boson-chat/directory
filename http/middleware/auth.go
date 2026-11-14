@@ -3,6 +3,7 @@ package middleware
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -15,6 +16,12 @@ import (
 	"github.com/boson-chat/directory/internal/apperr"
 	"github.com/boson-chat/directory/internal/principal"
 	"github.com/golang-jwt/jwt/v5"
+)
+
+// Internal service auth headers.
+const (
+	InternalTokenHeader = "X-Internal-Token"
+	ActingUserHeader    = "X-Acting-User"
 )
 
 // CSRFHeader must be present on unsafe requests authenticated by cookie.
@@ -99,10 +106,29 @@ func HashNetworkKey(key string) string {
 // access-token cookie, and stores it with principal.With. No credentials =
 // anonymous (handlers decide); bad credentials = 401. verifier may be nil
 // (account sign-in off).
-func Authenticate(verifier TokenVerifier, cookieName string, onError func(nethttp.ResponseWriter, *nethttp.Request, error)) func(nethttp.Handler) nethttp.Handler {
+//
+// internalToken (DIRECTORY_INTERNAL_TOKEN, empty = off) admits a trusted
+// service via "X-Internal-Token: <token>" (compared in constant time) as an
+// operator with every permission; "X-Acting-User: <name>" names the person
+// for the audit log.
+func Authenticate(verifier TokenVerifier, cookieName, internalToken string, onError func(nethttp.ResponseWriter, *nethttp.Request, error)) func(nethttp.Handler) nethttp.Handler {
 	return func(next nethttp.Handler) nethttp.Handler {
 		return nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
-			p, err := resolve(r, verifier, cookieName)
+			var p *principal.Principal
+			var err error
+			if tok := r.Header.Get(InternalTokenHeader); tok != "" {
+				if internalToken == "" || subtle.ConstantTimeCompare([]byte(tok), []byte(internalToken)) != 1 {
+					onError(w, r, ErrUnauthenticated)
+					return
+				}
+				acting := strings.TrimSpace(r.Header.Get(ActingUserHeader))
+				if len(acting) > 64 {
+					acting = acting[:64]
+				}
+				p = &principal.Principal{Kind: principal.KindInternal, Username: acting}
+			} else {
+				p, err = resolve(r, verifier, cookieName)
+			}
 			if err != nil {
 				onError(w, r, err)
 				return

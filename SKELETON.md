@@ -31,6 +31,9 @@ metrics/                         OTel instruments + Prometheus/OTLP provider
 
 ## Adding routes / workers (federation, BFF, …)
 
+JSON for listings: `http/views` (`views.NewNetwork`, `views.NewListing`) — reuse it for the feed's
+public network fields. The API reference is in README.md.
+
 Create a package (e.g. `http/handlers/federation`) and register a module:
 
 ```go
@@ -103,6 +106,9 @@ then add `_ "github.com/boson-chat/directory/http/handlers/federation"` to
   the key as `base64url(HMAC-SHA256(secret, "boson-admin directory key v1\x00" + lower(hostname)))`.
 - Cookie `boson_at` (`AUTH_ACCESS_COOKIE`) for the browser flow when the auth cookie is scoped to the
   parent domain; unsafe methods then need `X-Requested-With`.
+- `X-Internal-Token: $DIRECTORY_INTERNAL_TOKEN` (+ `X-Acting-User: <name>` for the audit log) →
+  `principal.KindInternal`: an operator with every permission (`p.Has(anything)` is true), accepted by
+  `router.Router.Operator`. Used by the stack admin panel. Internal principals can't own listings.
 - CORS: `Access-Control-Allow-Origin: *` for everyone (no cookies); origins in `CORS_ALLOWED_ORIGINS`
   get the credentialed form.
 
