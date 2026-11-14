@@ -5,4 +5,5 @@ package http
 import (
 	_ "github.com/boson-chat/directory/http/handlers"            // core: public, owner, operator, legacy API + verify/health workers
 	_ "github.com/boson-chat/directory/http/handlers/federation" // feed, peers API, sync worker, built-in main peer
+	_ "github.com/boson-chat/directory/http/handlers/settings"   // runtime settings API (admin panel)
 )

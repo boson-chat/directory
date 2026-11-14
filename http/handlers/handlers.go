@@ -9,6 +9,7 @@ import (
 
 	"github.com/boson-chat/directory/http/router"
 	"github.com/boson-chat/directory/internal/services/health"
+	"github.com/boson-chat/directory/internal/services/settings"
 	"github.com/boson-chat/directory/internal/services/workers"
 )
 
@@ -20,6 +21,15 @@ type Handlers struct {
 	d          *router.Deps
 	writeLimit *ipLimiter
 	peers      peerCache
+}
+
+// settings returns the effective runtime settings.
+func (h *Handlers) settings() settings.Values {
+	if h.d.Settings == nil {
+		dc := h.d.Config.DirectoryConfig
+		return settings.Values{Name: dc.Name, Operator: dc.Operator, Contact: dc.Contact}
+	}
+	return h.d.Settings.Current()
 }
 
 // New builds the core handlers.
@@ -90,10 +100,12 @@ type wellKnownJSON struct {
 
 func (h *Handlers) wellKnown(w nethttp.ResponseWriter, _ *nethttp.Request) {
 	c := h.d.Config
-	w.Header().Set("Cache-Control", "public, max-age=300")
+	// name/operator/contact are runtime settings (admin panel).
+	v := h.settings()
+	w.Header().Set("Cache-Control", "public, max-age=60")
 	router.WriteJSON(w, nethttp.StatusOK, wellKnownJSON{
-		Name: c.DirectoryConfig.Name, API: c.HTTPConfig.PublicURL + "/v1", Version: APIVersion,
-		Operator: c.DirectoryConfig.Operator, Contact: c.DirectoryConfig.Contact, Auth: c.AuthConfig.PublicURL,
+		Name: v.Name, API: c.HTTPConfig.PublicURL + "/v1", Version: APIVersion,
+		Operator: v.Operator, Contact: v.Contact, Auth: c.AuthConfig.PublicURL,
 		AuthIssuer: c.AuthConfig.Issuer, Federation: true,
 	})
 }

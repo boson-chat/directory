@@ -11,10 +11,13 @@
 // Conflicts (enforced by the network repository): a local listing always
 // keeps its hostname; between peers the first verified listing wins.
 // Blocks apply to imports. Disabling or deleting a peer removes its
-// listings. The main directory (DIRECTORY_MAIN_PEER) is a built-in peer,
-// recreated on start unless DIRECTORY_INCLUDE_MAIN=false; an operator
-// disabling it at runtime is kept across restarts. A directory never
-// peers with itself.
+// listings. The main directory (setting main_peer_url, env default
+// DIRECTORY_MAIN_PEER) is a built-in peer, kept in place on start and
+// whenever the include_main / main_peer_url settings change (env default
+// DIRECTORY_INCLUDE_MAIN); an operator disabling it at runtime is kept
+// across restarts. A directory never peers with itself: when the main
+// peer URL is this directory, it *is* the main directory (IsMain) and has
+// no builtin peer.
 package federation
 
 import (
@@ -38,6 +41,7 @@ import (
 	"github.com/boson-chat/directory/internal/services/blocks"
 	"github.com/boson-chat/directory/internal/services/dnsverify"
 	"github.com/boson-chat/directory/internal/services/networks"
+	"github.com/boson-chat/directory/internal/services/settings"
 )
 
 // Client-facing errors.
@@ -57,6 +61,10 @@ func errUnreachable(err error) error {
 
 // WorkerName is the background sync job (and its leader lock).
 const WorkerName = "federation-sync"
+
+// SyncPoll is how often the sync worker looks for due peers; sync_every
+// (a runtime setting) decides when each peer is due.
+var SyncPoll = 30 * time.Second
 
 // SyncNowBudget caps an operator-triggered sync (the HTTP write timeout is 60s).
 var SyncNowBudget = 45 * time.Second
@@ -102,15 +110,29 @@ type FederationServiceImpl interface {
 	DeletePeer(ctx context.Context, p *principal.Principal, id string) error
 	SyncNow(ctx context.Context, p *principal.Principal, id string) (*peer.Peer, *SyncResult, error)
 
-	// SyncAll is the background worker: every active peer, and removal of
-	// listings left by inactive ones.
+	// SyncAll is the background worker: every active peer whose last sync
+	// is at least sync_every old, and removal of listings left by inactive
+	// ones.
 	SyncAll(ctx context.Context) error
 	// EnsurePeers creates/updates the built-in main peer and seeds
-	// DIRECTORY_PEERS (module start).
+	// DIRECTORY_PEERS once (module start).
 	EnsurePeers(ctx context.Context) error
 	// Active reports whether p is synced (enabled, and for the builtin,
-	// DIRECTORY_INCLUDE_MAIN on and not this directory).
+	// include_main on and not this directory).
 	Active(p *peer.Peer) bool
+
+	// IsSelf reports whether rawURL is this directory's own URL.
+	IsSelf(rawURL string) bool
+	// IsMain reports whether this directory is the main directory (the
+	// main peer URL is its own), so include_main does not apply.
+	IsMain() bool
+	// MainPeer returns the builtin peer row, nil when there is none (it
+	// may exist while include_main is off; Active says whether it is used).
+	MainPeer(ctx context.Context) (*peer.Peer, error)
+	// ApplyMainSettings re-applies include_main / main_peer_url at runtime:
+	// creates, re-points or switches off the builtin peer. enable also
+	// re-enables a builtin an operator had disabled.
+	ApplyMainSettings(ctx context.Context, pr *principal.Principal, enable bool) error
 }
 
 // Deps are the service's collaborators.
@@ -126,6 +148,9 @@ type Deps struct {
 	// MediaURL turns a stored icon/banner key into its public URL.
 	MediaURL func(key string) string
 	Config   config.FederationConfig
+	// Settings supplies include_main, main_peer_url and sync_every at
+	// runtime. Nil: fixed values from Config.
+	Settings settings.SettingsServiceImpl
 	// PublicURL is this directory's DIRECTORY_PUBLIC_URL (self-detection).
 	PublicURL string
 	// Strict: ENV=production (https peers, public IPs, https image URLs).
@@ -153,6 +178,11 @@ func NewFederationService(d Deps) *FederationService {
 	if d.Tx == nil {
 		d.Tx = db.NoTx{}
 	}
+	if d.Settings == nil {
+		d.Settings = settings.Static{V: settings.Values{
+			IncludeMain: d.Config.IncludeMain, MainPeerURL: d.Config.MainPeer, SyncEvery: d.Config.SyncEvery,
+		}}
+	}
 	s := &FederationService{d: d, self: map[string]bool{}}
 	if n, err := NormalizeURL(d.PublicURL, false); err == nil {
 		s.self[n] = true
@@ -174,12 +204,14 @@ func (s *FederationService) isSelfWellKnown(wk *WellKnown) bool {
 	return false
 }
 
-// mainURL is the normalised DIRECTORY_MAIN_PEER ("" when unset/invalid).
-func (s *FederationService) mainURL() string {
-	if strings.TrimSpace(s.d.Config.MainPeer) == "" {
+// mainURL is the normalised main peer URL ("" when unset/invalid).
+func (s *FederationService) mainURL() string { return s.mainURLOf(s.d.Settings.Current()) }
+
+func (s *FederationService) mainURLOf(v settings.Values) string {
+	if strings.TrimSpace(v.MainPeerURL) == "" {
 		return ""
 	}
-	u, err := NormalizeURL(s.d.Config.MainPeer, s.d.Strict)
+	u, err := NormalizeURL(v.MainPeerURL, s.d.Strict)
 	if err != nil {
 		return ""
 	}
@@ -188,8 +220,46 @@ func (s *FederationService) mainURL() string {
 
 // includeMain: the builtin peer is in use at all.
 func (s *FederationService) includeMain() bool {
+	v := s.d.Settings.Current()
+	m := s.mainURLOf(v)
+	return v.IncludeMain && m != "" && !s.isSelfURL(m)
+}
+
+func (s *FederationService) IsSelf(rawURL string) bool {
+	u, err := NormalizeURL(rawURL, false)
+	return err == nil && s.isSelfURL(u)
+}
+
+func (s *FederationService) IsMain() bool {
 	m := s.mainURL()
-	return s.d.Config.IncludeMain && m != "" && !s.isSelfURL(m)
+	return m != "" && s.isSelfURL(m)
+}
+
+func (s *FederationService) MainPeer(ctx context.Context) (*peer.Peer, error) {
+	p, err := s.d.Peers.GetBuiltin(ctx)
+	if errors.Is(err, peer.ErrNotFound) {
+		return nil, nil
+	}
+	return p, err
+}
+
+func (s *FederationService) ApplyMainSettings(ctx context.Context, pr *principal.Principal, enable bool) error {
+	if err := s.ensureBuiltin(ctx); err != nil {
+		return err
+	}
+	if !enable || !s.includeMain() {
+		return nil
+	}
+	p, err := s.MainPeer(ctx)
+	if err != nil || p == nil || p.Enabled {
+		return err
+	}
+	p.Enabled = true
+	if err := s.d.Peers.Update(ctx, p, "enabled"); err != nil {
+		return err
+	}
+	s.d.Audit.Record(ctx, pr, "peer.enable", audit.Target{}, map[string]any{"peer_id": p.ID, "url": p.URL, "builtin": true})
+	return nil
 }
 
 func (s *FederationService) Active(p *peer.Peer) bool {
@@ -197,7 +267,7 @@ func (s *FederationService) Active(p *peer.Peer) bool {
 }
 
 // visible: operators see every peer except a builtin that is switched off
-// by configuration (DIRECTORY_INCLUDE_MAIN=false, or it is this directory).
+// by the include_main setting (or the main peer is this directory).
 func (s *FederationService) visible(p *peer.Peer) bool { return !p.Builtin || s.includeMain() }
 
 // ---- feed ----
@@ -332,7 +402,8 @@ func (s *FederationService) AddPeer(ctx context.Context, p *principal.Principal,
 }
 
 // dropListings removes every listing imported from p and resets its
-// cursor, so a later enable re-imports from scratch.
+// cursor, so a later enable re-imports from scratch (and is due for the
+// sync worker at once).
 func (s *FederationService) dropListings(ctx context.Context, p *peer.Peer) (int64, error) {
 	var n int64
 	err := s.d.Tx.WithTx(ctx, func(ctx context.Context) error {
@@ -340,8 +411,8 @@ func (s *FederationService) dropListings(ctx context.Context, p *peer.Peer) (int
 		if n, err = s.d.Networks.DeleteAllByOrigin(ctx, network.PeerOrigin(p.ID)); err != nil {
 			return err
 		}
-		p.Cursor, p.ListingCount, p.LastFullSyncAt = 0, 0, nil
-		return s.d.Peers.Update(ctx, p, "cursor", "listing_count", "last_full_sync_at")
+		p.Cursor, p.ListingCount, p.LastFullSyncAt, p.LastSyncAt = 0, 0, nil, nil
+		return s.d.Peers.Update(ctx, p, "cursor", "listing_count", "last_full_sync_at", "last_sync_at")
 	})
 	return n, err
 }
@@ -447,18 +518,29 @@ func (s *FederationService) SyncAll(ctx context.Context) error {
 		return err
 	}
 	log := logger.FromCtx(ctx)
+	every := s.d.Settings.Current().SyncEvery
+	if every <= 0 {
+		every = s.d.Config.SyncEvery
+	}
+	now := s.now()
 	for _, p := range list {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
 		if !s.Active(p) {
 			// Listings of a disabled / switched-off peer never stay around
-			// (covers DIRECTORY_INCLUDE_MAIN flipping to false).
+			// (covers include_main flipping to false).
 			if n, err := s.d.Networks.CountByOrigin(ctx, network.PeerOrigin(p.ID)); err == nil && (n > 0 || p.ListingCount > 0) {
 				if _, err := s.dropListings(ctx, p); err != nil {
 					log.Warn().Err(err).Str("peer", p.ID).Msg("federation: removing listings of inactive peer")
 				}
 			}
+			continue
+		}
+		// The worker polls often; each peer syncs once per sync_every (a
+		// little slack so a poll landing just short of it doesn't wait a
+		// whole extra round).
+		if p.LastSyncAt != nil && now.Sub(*p.LastSyncAt) < every-SyncPoll/2 {
 			continue
 		}
 		var res *SyncResult
@@ -487,16 +569,34 @@ func (s *FederationService) EnsurePeers(ctx context.Context) error {
 	if err := s.ensureBuiltin(ctx); err != nil {
 		return err
 	}
+	// DIRECTORY_PEERS is an initial seed: each URL is added once, so a
+	// peer the operator removes later stays removed.
+	seeded, err := s.d.Settings.SeededPeers(ctx)
+	if err != nil {
+		return err
+	}
+	done := map[string]bool{}
+	for _, u := range seeded {
+		done[u] = true
+	}
+	var mark []string
+	defer func() {
+		if err := s.d.Settings.MarkSeeded(ctx, mark); err != nil {
+			log.Warn().Err(err).Msg("DIRECTORY_PEERS: recording seeded peers")
+		}
+	}()
 	for _, raw := range config.SplitList(s.d.Config.Peers) {
 		u, err := NormalizeURL(raw, s.d.Strict)
 		if err != nil {
 			log.Warn().Str("url", raw).Err(err).Msg("DIRECTORY_PEERS: skipping invalid peer URL")
 			continue
 		}
-		if s.isSelfURL(u) || u == s.mainURL() {
+		if s.isSelfURL(u) || u == s.mainURL() || done[u] {
 			continue
 		}
+		done[u] = true
 		if _, err := s.d.Peers.GetByURL(ctx, u); err == nil {
+			mark = append(mark, u)
 			continue
 		} else if !errors.Is(err, peer.ErrNotFound) {
 			return err
@@ -504,6 +604,7 @@ func (s *FederationService) EnsurePeers(ctx context.Context) error {
 		if err := s.d.Peers.Create(ctx, &peer.Peer{URL: u, Enabled: true}); err != nil && !errors.Is(err, peer.ErrExists) {
 			return err
 		}
+		mark = append(mark, u)
 		s.d.Audit.System(ctx, "federation", "peer.seed", audit.Target{}, map[string]any{"url": u})
 	}
 	return nil
@@ -545,7 +646,7 @@ func (s *FederationService) ensureBuiltin(ctx context.Context) error {
 		}
 		s.d.Audit.System(ctx, "federation", "peer.builtin_create", audit.Target{}, map[string]any{"peer_id": p.ID, "url": main})
 	case cur.URL != main:
-		// DIRECTORY_MAIN_PEER changed: re-point the builtin, keeping its
+		// main_peer_url changed: re-point the builtin, keeping its
 		// enabled flag; listings of the old main directory go.
 		if ex, err := s.d.Peers.GetByURL(ctx, main); err == nil {
 			if _, err := s.dropListings(ctx, ex); err != nil {

@@ -101,7 +101,9 @@ type AuthConfig struct {
 func (a AuthConfig) Enabled() bool { return a.Issuer != "" }
 
 type DirectoryConfig struct {
-	// Shown in /.well-known/boson-directory.json.
+	// Shown in /.well-known/boson-directory.json. Name, Operator and
+	// Contact are defaults of runtime settings (internal/services/settings):
+	// an override set from the admin panel wins.
 	Name     string `default:"boson directory" env:"DIRECTORY_NAME"`
 	Operator string `env:"DIRECTORY_OPERATOR"`
 	Contact  string `env:"DIRECTORY_CONTACT"`
@@ -170,9 +172,11 @@ func (m MediaConfig) UseS3() bool { return m.S3Bucket != "" }
 // FederationConfig is read by internal/services/federation.
 type FederationConfig struct {
 	// Built-in main peer; skipped when it is this directory itself.
+	// MainPeer, IncludeMain and SyncEvery are defaults of runtime settings
+	// (internal/services/settings): an override set from the admin panel wins.
 	MainPeer    string `default:"https://directory.boson.chat" env:"DIRECTORY_MAIN_PEER"`
 	IncludeMain bool   `default:"true" env:"DIRECTORY_INCLUDE_MAIN"`
-	// Comma-separated extra peer URLs seeded on start.
+	// Comma-separated extra peer URLs, each seeded once on start.
 	Peers     string        `env:"DIRECTORY_PEERS"`
 	SyncEvery time.Duration `default:"10m" env:"DIRECTORY_SYNC_EVERY"`
 	// Run the background sync worker (sync-now still works when off).

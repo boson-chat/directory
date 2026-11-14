@@ -14,6 +14,7 @@ import type {
 	NetworkStatus,
 	Peer,
 	PeerCheck,
+	DirectorySettings,
 	Sort,
 	SyncResult,
 	VerifyResponse,
@@ -165,6 +166,9 @@ export const directory = {
 			authed: true
 		}),
 	removePeer: (peerId: string) => call<void>('DELETE', `/v1/admin/peers/${id(peerId)}`, { authed: true }),
+	settings: () => call<DirectorySettings>('GET', '/v1/admin/settings', { authed: true }),
+	patchSettings: (body: Record<string, unknown>) =>
+		call<DirectorySettings>('PATCH', '/v1/admin/settings', { body, authed: true }),
 
 	blocks: () => call<{ blocks: Block[] }>('GET', '/v1/admin/blocks', { authed: true }),
 	addBlock: (pattern: string, reason: string) =>

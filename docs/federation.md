@@ -49,9 +49,11 @@ Errors are `{error, code, message}`.
 
 ## Sync
 
-Every `DIRECTORY_SYNC_EVERY` (10 min) the `federation-sync` worker (one
-replica at a time, Postgres advisory lock; each peer also has its own lock
-shared with "sync now") pulls each active peer:
+The `federation-sync` worker polls every 30 s (one replica at a time,
+Postgres advisory lock; each peer also has its own lock shared with "sync
+now") and pulls each active peer whose last sync is at least `sync_every`
+old (runtime setting, default `DIRECTORY_SYNC_EVERY`, 10 min). A peer that
+was just added, re-enabled or re-pointed is due at once:
 
 1. Fetch and validate the peer's `.well-known`. If it advertises this
    directory's own API, nothing is imported.
@@ -73,18 +75,33 @@ shared with "sync now") pulls each active peer:
 
 ## Built-in main peer
 
-- `DIRECTORY_MAIN_PEER` (default `https://directory.boson.chat`) is created
-  on start as a `builtin` peer when `DIRECTORY_INCLUDE_MAIN=true` (default).
-- An operator disabling it (`PATCH {enabled:false}`) is stored on the row
-  and survives restarts; it is never silently re-enabled or deleted.
-- `DIRECTORY_INCLUDE_MAIN=false` hides it from the API and removes its
-  listings; the row (and the operator's choice) is kept for when it is
-  turned back on. Changing `DIRECTORY_MAIN_PEER` re-points the row.
+`include_main` and `main_peer_url` are runtime settings (`PATCH
+/v1/admin/settings`, normally from the stack admin panel); the env values
+`DIRECTORY_INCLUDE_MAIN` (default `true`) and `DIRECTORY_MAIN_PEER`
+(default `https://directory.boson.chat`) are only their defaults. A value
+set at runtime is stored in the database and beats the env across restarts
+until it is reset (`null`).
+
+- The main peer is kept as a `builtin` peer while `include_main` is on:
+  created on start or the moment `include_main` is switched on (no
+  restart), and re-enabled then if an operator had disabled it.
+- An operator disabling it (`PATCH /v1/admin/peers/{id} {enabled:false}`)
+  is stored on the row and survives restarts; only `include_main: true`
+  (an explicit choice) or re-enabling the peer turns it back on.
+- `include_main: false` hides it from the API and removes its listings at
+  once; the row (and the operator's choice) is kept for when it is turned
+  back on. Changing `main_peer_url` re-points the row (the old main
+  directory's listings go).
 - A directory never peers with itself: `DIRECTORY_PUBLIC_URL` (or
   `PUBLIC_URL`) equal to the peer URL, or the peer's `.well-known` `api` pointing back
-  here, both count. directory.boson.chat therefore has no builtin peer.
-- `DIRECTORY_PEERS` (comma-separated URLs) seeds extra peers on start
-  (only if missing).
+  here, both count. When the main peer URL is this directory, it *is* the
+  main directory: `GET /v1/admin/settings` reports `is_main: true`, there
+  is no builtin peer, and `include_main: true` is refused (409
+  `is_main_directory`). directory.boson.chat is in that position.
+- `DIRECTORY_PEERS` (comma-separated URLs) is an initial seed: each URL is
+  added once (remembered in `directory_settings.seeded_peers`), so a peer
+  the operator removes later is not re-added on the next start. Manage
+  peers at runtime with the peers API / the admin panel.
 
 ## Safety
 
@@ -101,12 +118,15 @@ shared with "sync now") pulls each active peer:
 
 ## Configuration
 
+Settings marked *runtime* are defaults: change them in the admin panel
+(`/v1/admin/settings`), not in `.env`.
+
 | env | default | |
 |---|---|---|
-| `DIRECTORY_MAIN_PEER` | `https://directory.boson.chat` | built-in main peer |
-| `DIRECTORY_INCLUDE_MAIN` | `true` | include it |
-| `DIRECTORY_PEERS` | | extra peer URLs seeded on start |
-| `DIRECTORY_SYNC_EVERY` | `10m` | worker interval |
+| `DIRECTORY_MAIN_PEER` | `https://directory.boson.chat` | built-in main peer (*runtime*: `main_peer_url`) |
+| `DIRECTORY_INCLUDE_MAIN` | `true` | include it (*runtime*: `include_main`) |
+| `DIRECTORY_PEERS` | | extra peer URLs, seeded once on start |
+| `DIRECTORY_SYNC_EVERY` | `10m` | per-peer sync interval (*runtime*: `sync_every`, 1m–168h) |
 | `DIRECTORY_SYNC_ENABLED` | `true` | run the worker |
 | `DIRECTORY_PEER_TIMEOUT` | `15s` | |
 | `DIRECTORY_PEER_SYNC_TIMEOUT` | `5m` | |
@@ -121,6 +141,8 @@ shared with "sync now") pulls each active peer:
   building, import validation.
 - `make test-pg-up test-integration` — several in-process directories on
   Postgres: feed paging, import + re-verification, conflicts, blocks,
-  deletes, full-resync sweep, limits, built-in peer persistence, self-peer.
+  deletes, full-resync sweep, limits, built-in peer persistence, self-peer,
+  runtime settings (`settings_test.go`: include_main/main_peer_url at
+  runtime, overrides vs env across restarts, is_main, seed-once, sync_every).
 - `make test-federation` — two directories, Postgres and a fake DNS/auth
   server in docker (`test/federation`), verifying over real DNS queries.

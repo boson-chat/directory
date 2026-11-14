@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { directory, ApiError } from '$lib/api';
-	import type { Peer, PeerCheck } from '$lib/types';
+	import type { DirectorySettings, Peer, PeerCheck } from '$lib/types';
 	import { num } from '$lib/format';
 	import { toasts, errorText } from '$lib/toasts.svelte';
 	import State from '$lib/components/State.svelte';
@@ -17,13 +17,30 @@
 	let checking = $state(false);
 	let adding = $state(false);
 	let syncing = $state<Record<string, boolean>>({});
+	// Runtime settings (directory ≥ 1.4.0); null when unavailable.
+	let settings = $state<DirectorySettings | null>(null);
+	let including = $state(false);
 
 	async function load() {
 		error = '';
 		try {
-			peers = (await directory.peers()).peers;
+			const [p, s] = await Promise.all([directory.peers(), directory.settings().catch(() => null)]);
+			peers = p.peers;
+			settings = s;
 		} catch (e) {
 			error = errorText(e);
+		}
+	}
+	async function includeMain() {
+		including = true;
+		try {
+			settings = await directory.patchSettings({ include_main: true });
+			peers = (await directory.peers()).peers;
+			toasts.push('Importing the main directory. The first sync starts within a minute.');
+		} catch (err) {
+			toasts.push(errorText(err), 'bad');
+		} finally {
+			including = false;
 		}
 	}
 	$effect(() => {
@@ -178,15 +195,26 @@
 				each network’s own <code>_boson</code> TXT record itself.
 			</p>
 			<p>
-				Switch it off to run an independent directory. The setting sticks across restarts; the
-				<code>DIRECTORY_INCLUDE_MAIN=false</code> environment variable does the same at deploy time.
+				Switch it off to run an independent directory. The setting sticks across restarts (the stack admin
+				panel’s Directory page changes it too).
 			</p>
 		</div>
 		{#if builtin}
 			<ul class="peers">{@render peerRow(builtin)}</ul>
+		{:else if settings?.is_main}
+			<State kind="off" title="This is the boson main directory">
+				Other directories include this one; it doesn’t import itself.
+			</State>
+		{:else if settings}
+			<State kind="off" title="This directory doesn’t import the main directory">
+				It’s switched off for this directory.
+				{#snippet action()}<button class="btn btn-small" onclick={includeMain} disabled={including}
+						>{including ? 'Including…' : 'Include the main directory'}</button
+					>{/snippet}
+			</State>
 		{:else}
 			<State kind="off" title="This directory doesn’t import the main directory">
-				Either this is directory.boson.chat itself, or <code>DIRECTORY_INCLUDE_MAIN</code> is false.
+				Either this is directory.boson.chat itself, or including it is switched off.
 			</State>
 		{/if}
 	</section>

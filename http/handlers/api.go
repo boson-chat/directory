@@ -155,7 +155,7 @@ func (h *Handlers) facets(w nethttp.ResponseWriter, r *nethttp.Request) {
 		return
 	}
 	c := h.d.Config
-	sources := []sourceJSON{{ID: network.OriginLocal, Name: c.DirectoryConfig.Name, URL: c.HTTPConfig.PublicURL, Count: counts[network.OriginLocal]}}
+	sources := []sourceJSON{{ID: network.OriginLocal, Name: h.settings().Name, URL: c.HTTPConfig.PublicURL, Count: counts[network.OriginLocal]}}
 	for _, p := range h.peerList(r.Context()) {
 		if n := counts[network.PeerOrigin(p.ID)]; n > 0 || p.Enabled {
 			sources = append(sources, sourceJSON{ID: p.ID, Name: peerLabel(p), URL: p.URL, Count: n})

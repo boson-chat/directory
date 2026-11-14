@@ -38,7 +38,9 @@ func init() {
 				return nil
 			}
 			svc := serviceFor(d)
-			return []workers.Worker{{Name: federation.WorkerName, Every: d.Config.FederationConfig.SyncEvery, Run: svc.SyncAll}}
+			// Poll for due peers; the sync_every setting spaces each peer's syncs.
+			every := min(d.Config.FederationConfig.SyncEvery, federation.SyncPoll)
+			return []workers.Worker{{Name: federation.WorkerName, Every: every, Run: svc.SyncAll}}
 		},
 		Start: func(ctx context.Context, d *router.Deps) error {
 			return serviceFor(d).EnsurePeers(ctx)
@@ -78,6 +80,7 @@ func serviceFor(d *router.Deps) federation.FederationServiceImpl {
 		}),
 		MediaURL:   d.Media.URLFor,
 		Config:     fc,
+		Settings:   d.Settings,
 		PublicURL:  d.Config.HTTPConfig.PublicURL,
 		Strict:     strict,
 		LapseAfter: d.Config.VerifyConfig.LapseAfter,
@@ -136,6 +139,11 @@ type peerJSON struct {
 	ListingCount   int        `json:"listing_count"`
 	CreatedAt      time.Time  `json:"created_at"`
 	UpdatedAt      time.Time  `json:"updated_at"`
+}
+
+// PeerJSON is p as the operator API returns it (for other modules).
+func PeerJSON(svc federation.FederationServiceImpl, p *peer.Peer) any {
+	return (&handler{svc: svc}).toJSON(p)
 }
 
 func (h *handler) toJSON(p *peer.Peer) peerJSON {
