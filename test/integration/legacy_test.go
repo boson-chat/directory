@@ -200,6 +200,34 @@ func TestImportLegacy(t *testing.T) {
 		t.Fatalf("legacy get %v", s)
 	}
 	e.expect(e.do("GET", "/servers/aaaaaaaa-0000-0000-0000-000000000005", "", nil), 404)
+	// /v1 knows the legacy id too: the row carries it, and GET by it works
+	// (clients saved servers under it before the move to /v1).
+	var listing struct {
+		Network map[string]any `json:"network"`
+	}
+	e.expect(e.do("GET", "/v1/networks/"+libera.ID, "", nil), 200).json(t, &listing)
+	if listing.Network["legacy_id"] != "aaaaaaaa-0000-0000-0000-000000000001" {
+		t.Fatalf("legacy_id %v", listing.Network["legacy_id"])
+	}
+	e.expect(e.do("GET", "/v1/networks/aaaaaaaa-0000-0000-0000-000000000001", "", nil), 200).json(t, &listing)
+	if listing.Network["id"] != libera.ID || listing.Network["hostname"] != "irc.libera.chat" {
+		t.Fatalf("v1 get by legacy id %v", listing.Network)
+	}
+	var page struct{ Networks []map[string]any }
+	e.expect(e.do("GET", "/v1/networks?q=libera", "", nil), 200).json(t, &page)
+	if len(page.Networks) != 1 || page.Networks[0]["legacy_id"] != "aaaaaaaa-0000-0000-0000-000000000001" {
+		t.Fatalf("list legacy_id %v", page.Networks)
+	}
+	// An unknown uuid is a 404, and native rows have no legacy_id.
+	e.expect(e.do("GET", "/v1/networks/aaaaaaaa-0000-0000-0000-0000000000ff", "", nil), 404)
+	native := e.registerVerified(bearer(e.token("usr_carol")), "irc.native.example", nil)
+	var nativeListing struct {
+		Network map[string]any `json:"network"`
+	}
+	e.expect(e.do("GET", "/v1/networks/"+native, "", nil), 200).json(t, &nativeListing)
+	if _, ok := nativeListing.Network["legacy_id"]; ok {
+		t.Fatalf("native row has legacy_id %v", nativeListing.Network)
+	}
 	var mine struct{ Listings []any }
 	e.expect(e.do("GET", "/v1/me/networks", bearer(e.token("usr_alice")), nil), 200).json(t, &mine)
 	if len(mine.Listings) != 2 {

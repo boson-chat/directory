@@ -26,6 +26,9 @@ type Network struct {
 	AuthURL     *string  `json:"auth_url,omitempty"`
 	IconURL     string   `json:"icon_url,omitempty"`
 	BannerURL   string   `json:"banner_url,omitempty"`
+	// LegacyID is the listing's id on the legacy boson API directory (a
+	// uuid), for rows imported from it: clients match servers saved under it.
+	LegacyID *string `json:"legacy_id,omitempty"`
 	// Status: pending | verified | lapsed | blocked. VerificationStatus
 	// repeats it for clients written against the old /servers shape.
 	Status             string     `json:"status"`
@@ -97,6 +100,10 @@ func NewNetwork(n *network.Network, m media.MediaServiceImpl) Network {
 		Status: n.Status, VerificationStatus: n.Status, LastVerifiedAt: n.LastVerifiedAt, LastCheckedAt: n.LastCheckedAt,
 		HealthStatus: n.HealthStatus, HealthCheckedAt: n.HealthCheckedAt, UserCount: n.UserCount, UserCountAt: n.UserCountAt,
 		Origin: n.Origin, CreatedAt: n.CreatedAt, UpdatedAt: n.UpdatedAt, RegisteredAt: n.CreatedAt,
+	}
+	if n.LegacyID != nil {
+		id := n.LegacyID.String()
+		out.LegacyID = &id
 	}
 	if m != nil {
 		out.IconURL, out.BannerURL = m.URLFor(deref(n.IconKey)), m.URLFor(deref(n.BannerKey))

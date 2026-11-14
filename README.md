@@ -60,7 +60,7 @@ set for the listing's managers:
 | | |
 |---|---|
 | `GET /v1/networks` | `q` (prefix search over name, hostname, description), `lang`, `tag`, `nsfw=true`, `source=all\|local\|<peer id>\|peer:<id>`, `sort=users\|active\|newest\|name` (default users), `limit` 1–100 (default 25, larger is clamped), `cursor`. → `{"networks": [Network], "next_cursor": string\|null, "total_estimate": n}`. Verified only; NSFW only with `nsfw=true`. The cursor is opaque, keyset, bound to its sort (400 `invalid_cursor` otherwise) and stable under inserts. `owner=<auth user id>` lists that account's listings in every status (needs `users.view`, `directory.manage`, the internal token, or being that account). |
-| `GET /v1/networks/{id}` | Listing. Verified only, unless you manage it (404 otherwise). |
+| `GET /v1/networks/{id}` | Listing. Verified only, unless you manage it (404 otherwise). `{id}` may also be a listing's legacy id (the uuid it had on the boson API directory; imported rows show it as `legacy_id`). |
 | `GET /v1/networks/lookup?hostname=` | Listing by hostname (normalised). Same visibility. With a Network key: only that key's own listing (any status), else 404. |
 | `GET /v1/facets?nsfw=` | `{"tags": [{"value","count"}], "languages": [...], "sources": [{"id","name","url","count"}]}` over verified listings. `sources` is `local` plus each peer; `id` works as `?source=`. |
 | `GET /.well-known/boson-directory.json` | `{"name","api","version","operator","contact","auth","federation":true}`; name/operator/contact are the current runtime settings |

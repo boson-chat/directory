@@ -22,6 +22,7 @@ import (
 	"github.com/boson-chat/directory/internal/services/dnsverify"
 	"github.com/boson-chat/directory/internal/services/media"
 	"github.com/boson-chat/directory/metrics"
+	"github.com/google/uuid"
 )
 
 // Deps are the service's collaborators.
@@ -196,8 +197,17 @@ func (s *NetworkService) visible(p *principal.Principal, n *network.Network) boo
 	return n.Status == network.StatusVerified || s.CanManage(p, n) || p.IsOperator()
 }
 
+// Get finds a listing by id. A uuid is the id it had on the legacy boson API
+// directory (legacy_id on imported rows): clients saved servers under those
+// ids before the move to /v1.
 func (s *NetworkService) Get(ctx context.Context, p *principal.Principal, id string) (*network.Network, error) {
-	n, err := s.repo.Get(ctx, id)
+	var n *network.Network
+	var err error
+	if u, perr := uuid.Parse(id); perr == nil {
+		n, err = s.repo.GetByLegacyID(ctx, u)
+	} else {
+		n, err = s.repo.Get(ctx, id)
+	}
 	if err != nil {
 		return nil, mapRepo(err)
 	}
