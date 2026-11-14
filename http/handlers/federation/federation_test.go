@@ -507,3 +507,44 @@ func TestSyncRecordsPeerErrors(t *testing.T) {
 		t.Fatalf("unreachable peer: %+v %+v", r.Result, r.Peer)
 	}
 }
+
+// Core labels imported rows with the peer's name (origin_name). Its peer
+// cache must see a peer added or renamed at once, not after its TTL.
+func TestOriginNameFollowsPeerChanges(t *testing.T) {
+	a := newInstance(t)
+	b := newInstance(t)
+	a.local("irc.one.test", network.StatusVerified)
+	type listResp struct {
+		Networks []struct {
+			Hostname   string  `json:"hostname"`
+			OriginName *string `json:"origin_name"`
+		} `json:"networks"`
+	}
+	originName := func() *string {
+		var l listResp
+		if code := b.do("GET", "/v1/networks", "", nil, &l); code != 200 {
+			t.Fatalf("list: %d", code)
+		}
+		for _, n := range l.Networks {
+			if n.Hostname == "irc.one.test" {
+				if n.OriginName == nil {
+					return new(string)
+				}
+				return n.OriginName
+			}
+		}
+		return nil
+	}
+	if originName() != nil { // primes core's peer cache with no peers
+		t.Fatal("listed before import")
+	}
+	id := b.addPeer(a.URL)
+	b.sync(id)
+	if got := originName(); got == nil || *got != "boson directory" {
+		t.Fatalf("origin_name after add: %v", got)
+	}
+	b.do("PATCH", "/v1/admin/peers/"+id, "op", map[string]any{"name": "Directory A"}, nil)
+	if got := originName(); got == nil || *got != "Directory A" {
+		t.Fatalf("origin_name after rename: %v", got)
+	}
+}

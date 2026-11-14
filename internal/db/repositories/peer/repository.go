@@ -3,6 +3,7 @@ package peer
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"time"
 
 	"github.com/boson-chat/directory/internal/db"
@@ -15,6 +16,18 @@ var (
 	ErrNotFound = errors.New("peer not found")
 	ErrExists   = errors.New("peer already exists")
 )
+
+// generation moves whenever a peer is created, deleted, or its label or
+// state (name, url, enabled, builtin) changes in this process, so caches
+// of peer names (core's origin_name / facet sources) can refresh at once
+// instead of waiting for their TTL.
+var generation atomic.Uint64
+
+// Generation is the current peer-change generation (see generation).
+func Generation() uint64 { return generation.Load() }
+
+// labelColumns are the columns whose change bumps the generation.
+var labelColumns = map[string]bool{"name": true, "url": true, "enabled": true, "builtin": true}
 
 type PeerRepositoryImpl interface {
 	// List returns every peer, builtin first, then oldest first.
@@ -81,7 +94,11 @@ func (r *PeerRepository) Create(ctx context.Context, p *Peer) error {
 		p.CreatedAt = now
 	}
 	p.UpdatedAt = now
-	return mapErr(r.db.Conn(ctx).Create(p).Error)
+	if err := r.db.Conn(ctx).Create(p).Error; err != nil {
+		return mapErr(err)
+	}
+	generation.Add(1)
+	return nil
 }
 
 func (r *PeerRepository) Update(ctx context.Context, p *Peer, columns ...string) error {
@@ -94,6 +111,12 @@ func (r *PeerRepository) Update(ctx context.Context, p *Peer, columns ...string)
 	if res.RowsAffected == 0 {
 		return ErrNotFound
 	}
+	for _, c := range columns {
+		if labelColumns[c] {
+			generation.Add(1)
+			break
+		}
+	}
 	return nil
 }
 
@@ -105,6 +128,7 @@ func (r *PeerRepository) Delete(ctx context.Context, id string) error {
 	if res.RowsAffected == 0 {
 		return ErrNotFound
 	}
+	generation.Add(1)
 	return nil
 }
 

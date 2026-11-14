@@ -12,10 +12,13 @@ import (
 )
 
 // peerCache labels peer origins (origin_name, facet sources). Peers change
-// rarely; a short cache keeps lists from querying them per row.
+// rarely; a short cache keeps lists from querying them per row. A peer
+// add/rename/enable/disable/delete in this process (peer.Generation)
+// refreshes it at once; other replicas catch up within the TTL.
 type peerCache struct {
 	mu    sync.Mutex
 	at    time.Time
+	gen   uint64 // peer.Generation() when loaded
 	peers []peer.Peer
 }
 
@@ -23,7 +26,8 @@ func (h *Handlers) peerList(ctx context.Context) []peer.Peer {
 	c := &h.peers
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.peers != nil && time.Since(c.at) < 30*time.Second {
+	gen := peer.Generation()
+	if c.peers != nil && c.gen == gen && time.Since(c.at) < 30*time.Second {
 		return c.peers
 	}
 	var list []peer.Peer
@@ -34,7 +38,7 @@ func (h *Handlers) peerList(ctx context.Context) []peer.Peer {
 	if list == nil {
 		list = []peer.Peer{}
 	}
-	c.peers, c.at = list, time.Now()
+	c.peers, c.at, c.gen = list, time.Now(), gen
 	return list
 }
 
