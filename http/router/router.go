@@ -21,6 +21,7 @@ import (
 	"github.com/boson-chat/directory/internal/services/dnsverify"
 	"github.com/boson-chat/directory/internal/services/media"
 	"github.com/boson-chat/directory/internal/services/networks"
+	"github.com/boson-chat/directory/internal/services/settings"
 	"github.com/boson-chat/directory/internal/services/workers"
 	"github.com/boson-chat/directory/metrics"
 )
@@ -37,6 +38,9 @@ type Deps struct {
 	Verifier    dnsverify.Verifier
 	Locker      leader.LockerImpl
 	Metrics     *metrics.Metrics
+	// Settings are the runtime settings (name, include_main, ...): env
+	// defaults overridden from the admin panel.
+	Settings settings.SettingsServiceImpl
 	// HTTPClient is for outbound calls (peers, media import).
 	HTTPClient *nethttp.Client
 	Now        func() time.Time

@@ -11,8 +11,12 @@ directory migrate up|down [--all]
 directory import-legacy --from <backend DSN> [--dry-run] [--legacy-cdn-url URL [--copy-media]] [-v]
 ```
 
-Configuration is env only: see [.env.example](.env.example). Code layout and how to add
-modules: [SKELETON.md](SKELETON.md).
+Configuration comes from env ([.env.example](.env.example)). The directory's name, operator,
+contact, main-directory and sync settings are **runtime settings**: the env values are only their
+defaults, and the operator changes them from the stack admin panel (`PATCH /v1/admin/settings`,
+stored in the database, applied without a restart). Secrets and infrastructure (database, auth,
+internal token, media storage, limits) stay env-only. Code layout and how to add modules:
+[SKELETON.md](SKELETON.md).
 
 ## API
 
@@ -59,7 +63,7 @@ set for the listing's managers:
 | `GET /v1/networks/{id}` | Listing. Verified only, unless you manage it (404 otherwise). `{id}` may also be a listing's legacy id (the uuid it had on the boson API directory; imported rows show it as `legacy_id`). |
 | `GET /v1/networks/lookup?hostname=` | Listing by hostname (normalised). Same visibility. With a Network key: only that key's own listing (any status), else 404. |
 | `GET /v1/facets?nsfw=` | `{"tags": [{"value","count"}], "languages": [...], "sources": [{"id","name","url","count"}]}` over verified listings. `sources` is `local` plus each peer; `id` works as `?source=`. |
-| `GET /.well-known/boson-directory.json` | `{"name","api","version","operator","contact","auth","federation":true}` |
+| `GET /.well-known/boson-directory.json` | `{"name","api","version","operator","contact","auth","federation":true}`; name/operator/contact are the current runtime settings |
 
 ### Owner
 
@@ -91,7 +95,34 @@ Wrong owner: 403 `not_owner` for a public (verified) listing, 404 for one you ca
 | `GET /v1/admin/blocks` · `POST /v1/admin/blocks {pattern, reason?}` · `DELETE /v1/admin/blocks/{id}` | pattern = hostname or `*.example.org` (the domain and every subdomain). Adding blocks matching listings (`blocked_network_ids`); removing releases them. 409 `block_exists`. |
 | `GET /v1/admin/audit` | `network_id`, `action`, `limit` ≤200, `cursor` → `{"entries": [{id, at, actor: {kind, id, name}, action, target: {network_id, hostname}, meta, ip, actor_kind, actor_id, actor_name, network_id, hostname}], "next_cursor"}` |
 
-Peers (`/v1/admin/peers…`) and the feed (`GET /v1/feed`) are the federation module's.
+Peers (`/v1/admin/peers…`) and the feed (`GET /v1/feed`) are the federation module's
+([docs/federation.md](docs/federation.md)).
+
+### Runtime settings (operator)
+
+| | |
+|---|---|
+| `GET /v1/admin/settings` | see below |
+| `PATCH /v1/admin/settings` | any of `{name, operator, contact, include_main, main_peer_url, sync_every}` → same body as GET. A value overrides the env default (stored in `directory_settings`, survives restarts); `null` resets the field to the env default. Applied at once: `.well-known` and facets show the new name, and `include_main` / `main_peer_url` create, re-point, re-enable or switch off the built-in main peer (switching off removes its listings). Audited as `settings.update` (`meta.changes.<field> = {from, to, reset?}`). 400 `invalid_request` (empty `name`, `operator` > 100 / `contact` > 200 chars, `sync_every` outside 1m–168h, bad URL, empty body); 409 `is_main_directory` for `include_main: true` while the main peer URL is this directory. |
+
+```json
+{
+  "settings":  {"name": "…", "operator": "…", "contact": "…", "include_main": true,
+                "main_peer_url": "https://directory.boson.chat", "sync_every": "10m"},
+  "defaults":  {"…": "the env values, same keys"},
+  "overridden": ["name"],
+  "is_main": false,
+  "main_active": true,
+  "main_peer": {"id": "per_…", "enabled": true, "builtin": true, "active": true, "…": "peer JSON"},
+  "public_url": "https://directory.example.org",
+  "updated_at": "…", "updated_by": "alice"
+}
+```
+
+`is_main` is true when the main peer URL is this directory's own URL (directory.boson.chat): it
+*is* the main directory, has no built-in peer, and `include_main` doesn't apply. `main_active`: the
+built-in peer is being synced (included, enabled, not this directory). `main_peer` is null when no
+built-in row exists.
 
 ### Legacy `/servers`
 

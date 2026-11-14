@@ -19,13 +19,16 @@ import (
 	auditrepo "github.com/boson-chat/directory/internal/db/repositories/audit"
 	blockrepo "github.com/boson-chat/directory/internal/db/repositories/block"
 	"github.com/boson-chat/directory/internal/db/repositories/network"
+	settingsrepo "github.com/boson-chat/directory/internal/db/repositories/settings"
 	"github.com/boson-chat/directory/internal/leader"
 	"github.com/boson-chat/directory/internal/logger"
 	"github.com/boson-chat/directory/internal/services/audit"
 	"github.com/boson-chat/directory/internal/services/blocks"
 	"github.com/boson-chat/directory/internal/services/dnsverify"
+	"github.com/boson-chat/directory/internal/services/federation"
 	"github.com/boson-chat/directory/internal/services/media"
 	"github.com/boson-chat/directory/internal/services/networks"
+	"github.com/boson-chat/directory/internal/services/settings"
 	"github.com/boson-chat/directory/internal/services/workers"
 	"github.com/boson-chat/directory/metrics"
 	"github.com/boson-chat/directory/ui"
@@ -146,10 +149,26 @@ func Build(ctx context.Context, cfg config.Config, opts Options) (*App, error) {
 		tokens = v
 	}
 
+	strict := cfg.AppConfig.IsProduction()
+	dc, fc := cfg.DirectoryConfig, cfg.FederationConfig
+	settingsService := settings.NewSettingsService(settings.Deps{
+		Repo: settingsrepo.NewSettingsRepository(database), Audit: auditService,
+		Defaults: settings.Values{
+			Name: dc.Name, Operator: dc.Operator, Contact: dc.Contact,
+			IncludeMain: fc.IncludeMain, MainPeerURL: fc.MainPeer, SyncEvery: fc.SyncEvery,
+		},
+		NormalizeURL: func(u string) (string, error) { return federation.NormalizeURL(u, strict) },
+	})
+	if err := settingsService.Load(ctx); err != nil {
+		// Old schema (AUTO_MIGRATE=false before `migrate up`): run on the
+		// env values; the settings API reports the database error.
+		logger.FromCtx(ctx).Warn().Err(err).Msg("settings: loading runtime settings failed; using env defaults")
+	}
+
 	deps := &router.Deps{
 		Config: cfg, DB: database, NetworkRepo: networkRepo, Networks: networkService, Blocks: blockService,
 		Audit: auditService, Media: mediaService, Verifier: verifier, Locker: locker, Metrics: m,
-		HTTPClient: httpClient, Now: opts.Now,
+		Settings: settingsService, HTTPClient: httpClient, Now: opts.Now,
 	}
 
 	// 4. Handlers: every registered module (http/modules.go).

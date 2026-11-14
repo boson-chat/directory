@@ -163,6 +163,23 @@ export interface SyncResult {
 	[key: string]: unknown;
 }
 
+/** GET /v1/admin/settings: runtime settings (env values are defaults). */
+export interface DirectorySettings {
+	settings: {
+		name: string;
+		operator: string;
+		contact: string;
+		include_main: boolean;
+		main_peer_url: string;
+		sync_every: string;
+	};
+	overridden: string[];
+	/** This is the main directory itself: include_main doesn't apply. */
+	is_main: boolean;
+	main_active: boolean;
+	main_peer: Peer | null;
+}
+
 export interface PeerCheck {
 	url: string;
 	well_known: WellKnown;
