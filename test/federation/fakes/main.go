@@ -11,7 +11,7 @@ package main
 
 import (
 	"crypto/ed25519"
-	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"io"
@@ -64,6 +64,14 @@ func env(k, def string) string {
 }
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "-health" {
+		// Container healthcheck (distroless: no shell or curl).
+		resp, err := http.Get("http://127.0.0.1" + env("HTTP_ADDR", ":8080") + "/healthz")
+		if err != nil || resp.StatusCode != http.StatusOK {
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
 	issuer := env("ISSUER", "http://fakes:8080")
 	table := &txtTable{txt: map[string]string{}}
 	for _, netw := range []string{"udp", "tcp"} {
@@ -71,10 +79,11 @@ func main() {
 		go func() { log.Fatal(srv.ListenAndServe()) }()
 	}
 
-	pub, priv, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		log.Fatal(err)
-	}
+	// A fixed key (seeded from KEY_SEED) so tokens survive a restart or
+	// recreation of this container mid-test.
+	seed := sha256.Sum256([]byte(env("KEY_SEED", "boson-directory-federation-e2e")))
+	priv := ed25519.NewKeyFromSeed(seed[:])
+	pub := priv.Public().(ed25519.PublicKey)
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("ok")) })
 	mux.HandleFunc("PUT /txt/{host}", func(w http.ResponseWriter, r *http.Request) {

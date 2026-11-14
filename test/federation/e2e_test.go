@@ -148,9 +148,19 @@ func (w *world) peers(u string) []peer {
 		}
 		code := call(w.t, "GET", u+"/v1/admin/peers", w.token, "", &r)
 		list = r.Peers
+		if code == 401 {
+			w.refreshToken()
+		}
 		return code == 200
 	})
 	return list
+}
+
+func (w *world) refreshToken() {
+	var tok string
+	if code := call(w.t, "GET", urlFake+"/token?perms=directory.manage", "", "", &tok); code == 200 && tok != "" {
+		w.token = tok
+	}
 }
 
 // syncB nudges B's sync of peer id (409 = the worker is already on it).

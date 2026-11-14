@@ -13,7 +13,7 @@ x-dir: &dir
     postgres:
       condition: service_healthy
     fakes:
-      condition: service_started
+      condition: service_healthy
   restart: on-failure
 
 x-dir-env: &dir-env
@@ -50,6 +50,11 @@ services:
       context: ../..
       dockerfile: test/federation/fakes/Dockerfile
     image: boson-directory-fakes:federation-e2e
+    healthcheck:
+      test: ["CMD", "/fakes", "-health"]
+      interval: 1s
+      timeout: 3s
+      retries: 60
     ports:
       - "127.0.0.1:${E2E_FAKES_PORT:-47391}:8080"
 
