@@ -1,4 +1,4 @@
-.PHONY: deps run build test test-unit test-integration test-pg-up test-pg-down lint migrate-up migrate-down migrate-create ui docker
+.PHONY: deps run build test test-unit test-integration test-federation test-pg-up test-pg-down lint migrate-up migrate-down migrate-create ui docker
 
 ifneq (,$(wildcard .env))
 include .env
@@ -39,6 +39,16 @@ test-pg-down:
 
 test-integration:
 	TEST_DATABASE_URL='$(TEST_DATABASE_URL)' go test -race -count=1 ./...
+
+# Two directories + Postgres + fake DNS/auth in docker (test/federation):
+# import, local DNS re-verification, conflicts, blocks, deletes, the
+# built-in main peer and its persistent disable. Leaves nothing behind.
+FED_COMPOSE = docker compose -f test/federation/compose.yml
+test-federation:
+	$(FED_COMPOSE) up -d --build --wait postgres fakes dir-a dir-b || ($(FED_COMPOSE) logs; $(FED_COMPOSE) down -v; exit 1)
+	(cd test/federation && go test -tags federation_e2e -count=1 -v -timeout 10m .); \
+		status=$$?; [ $$status -eq 0 ] || $(FED_COMPOSE) logs --tail 200 dir-a dir-b; \
+		$(FED_COMPOSE) down -v --remove-orphans; exit $$status
 
 lint:
 	go vet ./...

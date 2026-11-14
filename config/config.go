@@ -175,6 +175,21 @@ type FederationConfig struct {
 	// Comma-separated extra peer URLs seeded on start.
 	Peers     string        `env:"DIRECTORY_PEERS"`
 	SyncEvery time.Duration `default:"10m" env:"DIRECTORY_SYNC_EVERY"`
+	// Run the background sync worker (sync-now still works when off).
+	SyncEnabled bool `default:"true" env:"DIRECTORY_SYNC_ENABLED"`
+	// Per-request timeout for peer calls (.well-known, one feed page).
+	PeerTimeout time.Duration `default:"15s" env:"DIRECTORY_PEER_TIMEOUT"`
+	// Upper bound for one whole peer sync.
+	SyncTimeout time.Duration `default:"5m" env:"DIRECTORY_PEER_SYNC_TIMEOUT"`
+	// Largest peer response body accepted.
+	MaxResponseBytes int64 `default:"8388608" env:"DIRECTORY_PEER_MAX_BYTES"`
+	// Most listings imported from one peer.
+	MaxListingsPerPeer int `default:"10000" env:"DIRECTORY_PEER_MAX_LISTINGS"`
+	// Walk each peer's whole feed this often (removes listings the peer
+	// stopped exporting even if its tombstones were pruned).
+	ResyncEvery time.Duration `default:"24h" env:"DIRECTORY_PEER_RESYNC_EVERY"`
+	// Parallel DNS checks of freshly imported listings.
+	VerifyConcurrency int `default:"8" env:"DIRECTORY_PEER_VERIFY_CONCURRENCY"`
 }
 
 // TelemetryConfig controls metrics export. Prometheus on the internal
@@ -238,6 +253,10 @@ func (c Config) Validate() error {
 	}
 	if c.HealthConfig.Every <= 0 || c.HealthConfig.DialTimeout <= 0 {
 		return errors.New("HEALTH_EVERY and HEALTH_DIAL_TIMEOUT must be positive")
+	}
+	if f := c.FederationConfig; f.SyncEvery <= 0 || f.PeerTimeout <= 0 || f.SyncTimeout <= 0 || f.ResyncEvery <= 0 ||
+		f.MaxResponseBytes <= 0 || f.MaxListingsPerPeer <= 0 {
+		return errors.New("DIRECTORY_SYNC_EVERY and DIRECTORY_PEER_* limits must be positive")
 	}
 	if c.MediaConfig.UseS3() && c.MediaConfig.PublicURL == "" {
 		return errors.New("MEDIA_PUBLIC_URL is required with MEDIA_S3_BUCKET")

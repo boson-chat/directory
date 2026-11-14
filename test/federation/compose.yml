@@ -1,0 +1,83 @@
+# Two directories + Postgres + fake DNS/auth for `make test-federation`.
+# dir-a is the "main" directory (its DIRECTORY_MAIN_PEER points at itself,
+# so it must not peer with itself); dir-b includes dir-a as its built-in
+# main peer. Both verify DNS for real against the fakes container.
+name: directory-federation-e2e
+
+x-dir: &dir
+  build:
+    context: ../..
+    dockerfile: Dockerfile
+  image: boson-directory:federation-e2e
+  depends_on:
+    postgres:
+      condition: service_healthy
+    fakes:
+      condition: service_healthy
+  restart: on-failure
+
+x-dir-env: &dir-env
+  ENV: development
+  LOG_LEVEL: info
+  AUTH_ISSUER: http://fakes:8080
+  AUTH_JWKS_URL: http://fakes:8080/.well-known/jwks.json
+  DNS_RESOLVERS: r1=fakes:53,r2=fakes:53,r3=fakes:53
+  DNS_RESOLVER_TIMEOUT: 2s
+  HEALTH_WORKER_ENABLED: "false"
+  VERIFY_WORKER_TICK: 3s
+  VERIFY_PENDING_EVERY: 3s
+  DIRECTORY_SYNC_EVERY: 10s
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_USER: directory
+      POSTGRES_PASSWORD: e2e
+      POSTGRES_DB: dir_a
+    volumes:
+      - ./initdb:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "127.0.0.1:${E2E_PG_PORT:-47390}:5432"
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "directory", "-d", "dir_b"]
+      interval: 1s
+      timeout: 3s
+      retries: 60
+
+  fakes:
+    build:
+      context: ../..
+      dockerfile: test/federation/fakes/Dockerfile
+    image: boson-directory-fakes:federation-e2e
+    healthcheck:
+      test: ["CMD", "/fakes", "-health"]
+      interval: 1s
+      timeout: 3s
+      retries: 60
+    ports:
+      - "127.0.0.1:${E2E_FAKES_PORT:-47391}:8080"
+
+  dir-a:
+    <<: *dir
+    environment:
+      <<: *dir-env
+      DATABASE_URL: postgres://directory:e2e@postgres:5432/dir_a?sslmode=disable
+      PUBLIC_URL: http://dir-a:8080
+      DIRECTORY_NAME: directory A (main)
+      DIRECTORY_MAIN_PEER: http://dir-a:8080
+      DIRECTORY_INCLUDE_MAIN: "true"
+    ports:
+      - "127.0.0.1:${E2E_A_PORT:-47392}:8080"
+
+  dir-b:
+    <<: *dir
+    environment:
+      <<: *dir-env
+      DATABASE_URL: postgres://directory:e2e@postgres:5432/dir_b?sslmode=disable
+      PUBLIC_URL: http://dir-b:8080
+      DIRECTORY_NAME: directory B (self-hosted)
+      DIRECTORY_MAIN_PEER: http://dir-a:8080
+      DIRECTORY_INCLUDE_MAIN: ${B_INCLUDE_MAIN:-true}
+    ports:
+      - "127.0.0.1:${E2E_B_PORT:-47393}:8080"
