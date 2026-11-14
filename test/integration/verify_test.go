@@ -160,6 +160,8 @@ func TestFeedSeqAndUpsertByOrigin(t *testing.T) {
 	k := netkey("stack-admin-key-ggggggggggggggggggggggg")
 	repo := e.app.Deps.NetworkRepo
 	ctx := t.Context()
+	// (Peers are cached for 30s by the handlers, so create it first.)
+	e.exec("INSERT INTO peers (id, url, name) VALUES ('p1', 'https://peer.example', 'Peer One')")
 	local := e.registerVerified(k, "irc.local.example", nil)
 
 	// Peer listing: conflicts with the local hostname.
@@ -181,6 +183,32 @@ func TestFeedSeqAndUpsertByOrigin(t *testing.T) {
 	if e.status(n.ID) != "verified" {
 		t.Fatalf("peer listing not verified locally: %s", e.status(n.ID))
 	}
+	// Peer label and facet sources; operators can delete imported rows.
+	got := e.expect(e.do("GET", "/v1/networks/"+n.ID, "", nil), 200).m(t)["network"].(map[string]any)
+	if got["origin"] != "peer:p1" || got["origin_name"] != "Peer One" {
+		t.Fatalf("peer listing %v", got)
+	}
+	var f struct {
+		Sources []struct {
+			ID    string `json:"id"`
+			Name  string `json:"name"`
+			Count int    `json:"count"`
+		} `json:"sources"`
+	}
+	e.expect(e.do("GET", "/v1/facets", "", nil), 200).json(t, &f)
+	if len(f.Sources) != 2 || f.Sources[0].ID != "local" || f.Sources[0].Count != 1 || f.Sources[1].ID != "p1" || f.Sources[1].Count != 1 {
+		t.Fatalf("sources %+v", f.Sources)
+	}
+	if len(e.list("source=p1").Networks) != 1 {
+		t.Fatal("source=p1")
+	}
+	op := bearer(e.token("usr_op", "directory.manage"))
+	e.expect(e.do("PATCH", "/v1/networks/"+n.ID, op, map[string]any{"name": "x"}), 409)
+	tmp := peerNet("peer:p1", "o9", "irc.peer9.example", "t9")
+	if _, err := repo.UpsertByOrigin(ctx, tmp); err != nil {
+		t.Fatal(err)
+	}
+	e.expect(e.do("DELETE", "/v1/admin/networks/"+tmp.ID, op, nil), 204)
 	// Another peer can't take a verified hostname.
 	if res, _ := repo.UpsertByOrigin(ctx, peerNet("peer:p2", "x", "irc.peer.example", "tokB")); res != "conflict" {
 		t.Fatalf("first verified peer should win: %v", res)

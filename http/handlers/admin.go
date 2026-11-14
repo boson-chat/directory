@@ -23,6 +23,7 @@ func (h *Handlers) registerAdmin(r *router.Router) {
 	r.Operator("POST /v1/admin/networks/{id}/block", h.moderate(networks.ModerateBlock))
 	r.Operator("POST /v1/admin/networks/{id}/unblock", h.moderate(networks.ModerateUnblock))
 	r.Operator("POST /v1/admin/networks/{id}/recheck", h.moderate(networks.ModerateRecheck))
+	r.Operator("DELETE /v1/admin/networks/{id}", h.adminDelete)
 	r.Operator("GET /v1/admin/blocks", h.listBlocks)
 	r.Operator("POST /v1/admin/blocks", h.addBlock)
 	r.Operator("DELETE /v1/admin/blocks/{id}", h.removeBlock)
@@ -47,7 +48,7 @@ func (h *Handlers) adminList(w nethttp.ResponseWriter, r *nethttp.Request) {
 	}
 	f := network.ListFilter{
 		Query: q.Get("q"), Language: q.Get("lang"), Tag: q.Get("tag"), IncludeNSFW: true,
-		Source: networks.SourceOrigin(q.Get("source")), Sort: sort, Limit: limit + 1, AnyStatus: true,
+		Source: networks.SourceOrigin(firstNonEmpty(q.Get("source"), q.Get("origin"))), Sort: sort, Limit: limit + 1, AnyStatus: true,
 	}
 	if s := q.Get("status"); s != "" {
 		f.AnyStatus, f.Statuses = false, []string{s}
@@ -94,6 +95,24 @@ func decodeAdminCursor(s string) (*network.Cursor, error) {
 		return nil, err
 	}
 	return &c, nil
+}
+
+func firstNonEmpty(v ...string) string {
+	for _, s := range v {
+		if s != "" {
+			return s
+		}
+	}
+	return ""
+}
+
+// DELETE /v1/admin/networks/{id}: any listing, imported ones included.
+func (h *Handlers) adminDelete(w nethttp.ResponseWriter, r *nethttp.Request) {
+	if err := h.d.Networks.Delete(r.Context(), principal.From(r.Context()), r.PathValue("id")); err != nil {
+		router.WriteError(w, r, err)
+		return
+	}
+	w.WriteHeader(nethttp.StatusNoContent)
 }
 
 type moderateBody struct {
@@ -189,6 +208,20 @@ type auditJSON struct {
 	Hostname  *string        `json:"hostname,omitempty"`
 	IP        string         `json:"ip,omitempty"`
 	Meta      map[string]any `json:"meta"`
+	// Actor and Target group the fields above (web UI shape).
+	Actor  auditActor  `json:"actor"`
+	Target auditTarget `json:"target"`
+}
+
+type auditActor struct {
+	Kind string `json:"kind"`
+	ID   string `json:"id"`
+	Name string `json:"name,omitempty"`
+}
+
+type auditTarget struct {
+	NetworkID *string `json:"network_id,omitempty"`
+	Hostname  *string `json:"hostname,omitempty"`
 }
 
 // GET /v1/admin/audit?network_id=&action=&limit=&cursor=
@@ -228,7 +261,9 @@ func (h *Handlers) listAudit(w nethttp.ResponseWriter, r *nethttp.Request) {
 			meta = map[string]any{}
 		}
 		out = append(out, auditJSON{ID: e.ID, At: e.At, ActorKind: e.ActorKind, ActorID: e.ActorID, ActorName: e.ActorName,
-			Action: e.Action, NetworkID: e.NetworkID, Hostname: e.Hostname, IP: e.IP, Meta: meta})
+			Action: e.Action, NetworkID: e.NetworkID, Hostname: e.Hostname, IP: e.IP, Meta: meta,
+			Actor:  auditActor{Kind: e.ActorKind, ID: e.ActorID, Name: e.ActorName},
+			Target: auditTarget{NetworkID: e.NetworkID, Hostname: e.Hostname}})
 	}
 	router.WriteJSON(w, nethttp.StatusOK, map[string]any{"entries": out, "next_cursor": next})
 }

@@ -16,7 +16,9 @@ modules: [SKELETON.md](SKELETON.md).
 
 ## API
 
-JSON everywhere. Errors are `{"error": code, "message": text, "code": code}`.
+JSON everywhere. Errors are `{"error": code, "message": text, "code": code}` (codes include
+`invalid_request`, `invalid_hostname`, `invalid_cursor`, `unauthenticated`, `forbidden`, `not_owner`,
+`not_found`, `not_local`, `hostname_taken`, `blocked`, `token_expired`, `rate_limited`).
 GETs are CORS `*`.
 
 ### Network JSON
@@ -29,15 +31,17 @@ GETs are CORS `*`.
   "status": "verified", "verification_status": "verified",
   "last_verified_at": "…", "last_checked_at": "…",
   "health_status": "up", "health_checked_at": "…", "user_count": 42, "user_count_at": "…",
-  "origin": "local", "created_at": "…", "updated_at": "…", "registered_at": "…",
-  "owner": {"kind": "account|network_key|none", "auth_user_id": "usr_…"}
+  "origin": "local", "origin_name": null, "created_at": "…", "updated_at": "…", "registered_at": "…",
+  "owner": {"kind": "account|network_key|none", "auth_user_id": "usr_…"},
+  "verification_token": "…", "token_issued_at": "…", "token_expires_at": "…"
 }
 ```
 
 `status`: `pending | verified | lapsed | blocked`; `verification_status` and `registered_at` repeat
 `status`/`created_at` for clients written against `/servers`. `origin` is `local` or
-`peer:<peer id>`. Optional fields are omitted when empty. `owner` only appears for whoever may
-manage the listing (and in operator/owner lists).
+`peer:<peer id>`; `origin_name` is the peer's name (or URL), null for local. Optional fields are
+omitted when empty. `owner`, `verification_token`, `token_issued_at` and `token_expires_at`
+(issued + 72 h) only appear for whoever may manage the listing (`owner` also in operator/owner lists).
 
 A **Listing** is `{"network": Network, "verification": Verification | null}`; `verification` is only
 set for the listing's managers:
@@ -54,7 +58,7 @@ set for the listing's managers:
 | `GET /v1/networks` | `q` (prefix search over name, hostname, description), `lang`, `tag`, `nsfw=true`, `source=all\|local\|<peer id>\|peer:<id>`, `sort=users\|active\|newest\|name` (default users), `limit` 1–100 (default 25, larger is clamped), `cursor`. → `{"networks": [Network], "next_cursor": string\|null, "total_estimate": n}`. Verified only; NSFW only with `nsfw=true`. The cursor is opaque, keyset, bound to its sort (400 `invalid_cursor` otherwise) and stable under inserts. `owner=<auth user id>` lists that account's listings in every status (needs `users.view`, `directory.manage`, the internal token, or being that account). |
 | `GET /v1/networks/{id}` | Listing. Verified only, unless you manage it (404 otherwise). |
 | `GET /v1/networks/lookup?hostname=` | Listing by hostname (normalised). Same visibility. With a Network key: only that key's own listing (any status), else 404. |
-| `GET /v1/facets?nsfw=` | `{"tags": [{"value","count"}], "languages": [...]}` over verified listings. |
+| `GET /v1/facets?nsfw=` | `{"tags": [{"value","count"}], "languages": [...], "sources": [{"id","name","url","count"}]}` over verified listings. `sources` is `local` plus each peer; `id` works as `?source=`. |
 | `GET /.well-known/boson-directory.json` | `{"name","api","version","operator","contact","auth","federation":true}` |
 
 ### Owner
@@ -81,10 +85,11 @@ Wrong owner: 403 `not_owner` for a public (verified) listing, 404 for one you ca
 
 | | |
 |---|---|
-| `GET /v1/admin/networks` | every status and origin; `status`, `q`, `source`, `sort` (default newest), `limit` ≤100, `cursor` → list JSON with `owner` |
+| `GET /v1/admin/networks` | every status and origin; `status`, `q`, `source` (or `origin`), `sort` (default newest), `limit` ≤100, `cursor` → list JSON with `owner` |
 | `POST /v1/admin/networks/{id}/block` · `/unblock` · `/recheck` | body `{reason?}` → Listing (+ `report` for recheck). Unblock → `lapsed` (was verified) or `pending`, re-checked on the next tick; 409 `blocked_by_pattern` if a block pattern still matches. |
+| `DELETE /v1/admin/networks/{id}` | 204; any listing, imported ones included |
 | `GET /v1/admin/blocks` · `POST /v1/admin/blocks {pattern, reason?}` · `DELETE /v1/admin/blocks/{id}` | pattern = hostname or `*.example.org` (the domain and every subdomain). Adding blocks matching listings (`blocked_network_ids`); removing releases them. 409 `block_exists`. |
-| `GET /v1/admin/audit` | `network_id`, `action`, `limit` ≤200, `cursor` → `{"entries": [{id, at, actor_kind, actor_id, actor_name, action, network_id, hostname, ip, meta}], "next_cursor"}` |
+| `GET /v1/admin/audit` | `network_id`, `action`, `limit` ≤200, `cursor` → `{"entries": [{id, at, actor: {kind, id, name}, action, target: {network_id, hostname}, meta, ip, actor_kind, actor_id, actor_name, network_id, hostname}], "next_cursor"}` |
 
 Peers (`/v1/admin/peers…`) and the feed (`GET /v1/feed`) are the federation module's.
 

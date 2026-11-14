@@ -39,7 +39,9 @@ func (h *Handlers) registerAPI(r *router.Router) {
 
 func (h *Handlers) listing(r *nethttp.Request, n *network.Network) views.Listing {
 	p := principal.From(r.Context())
-	return views.NewListing(n, h.d.Media, h.d.Networks.CanManage(p, n), h.d.Networks.Options().TokenTTL)
+	l := views.NewListing(n, h.d.Media, h.d.Networks.CanManage(p, n), h.d.Networks.Options().TokenTTL)
+	l.Network.WithOriginName(h.peerNames(r.Context()))
+	return l
 }
 
 type listJSON struct {
@@ -56,9 +58,11 @@ func boolParam(v string) bool {
 func (h *Handlers) pageJSON(r *nethttp.Request, page *networks.Page, withOwner bool) listJSON {
 	p := principal.From(r.Context())
 	out := listJSON{Networks: make([]views.Network, 0, len(page.Networks)), TotalEstimate: page.TotalEstimate}
+	names := h.peerNames(r.Context())
 	for _, n := range page.Networks {
 		v := views.NewNetwork(n, h.d.Media)
-		if withOwner || h.d.Networks.CanManage(p, n) && p != nil && !p.IsOperator() {
+		v.WithOriginName(names)
+		if withOwner || (p != nil && !p.IsOperator() && h.d.Networks.CanManage(p, n)) {
 			v.Owner = views.OwnerOf(n)
 		}
 		out.Networks = append(out.Networks, v)
@@ -127,16 +131,38 @@ func (h *Handlers) lookup(w nethttp.ResponseWriter, r *nethttp.Request) {
 type facetsJSON struct {
 	Tags      []network.Facet `json:"tags"`
 	Languages []network.Facet `json:"languages"`
+	Sources   []sourceJSON    `json:"sources"`
+}
+
+// sourceJSON is a listing source: "local" or a peer (id usable as ?source=).
+type sourceJSON struct {
+	ID    string `json:"id"`
+	Name  string `json:"name"`
+	URL   string `json:"url"`
+	Count int64  `json:"count"`
 }
 
 func (h *Handlers) facets(w nethttp.ResponseWriter, r *nethttp.Request) {
-	tags, langs, err := h.d.Networks.Facets(r.Context(), boolParam(r.URL.Query().Get("nsfw")))
+	nsfw := boolParam(r.URL.Query().Get("nsfw"))
+	tags, langs, err := h.d.Networks.Facets(r.Context(), nsfw)
 	if err != nil {
 		router.WriteError(w, r, err)
 		return
 	}
+	counts, err := h.d.NetworkRepo.OriginCounts(r.Context(), nsfw)
+	if err != nil {
+		router.WriteError(w, r, err)
+		return
+	}
+	c := h.d.Config
+	sources := []sourceJSON{{ID: network.OriginLocal, Name: c.DirectoryConfig.Name, URL: c.HTTPConfig.PublicURL, Count: counts[network.OriginLocal]}}
+	for _, p := range h.peerList(r.Context()) {
+		if n := counts[network.PeerOrigin(p.ID)]; n > 0 || p.Enabled {
+			sources = append(sources, sourceJSON{ID: p.ID, Name: peerLabel(p), URL: p.URL, Count: n})
+		}
+	}
 	w.Header().Set("Cache-Control", "public, max-age=60")
-	router.WriteJSON(w, nethttp.StatusOK, facetsJSON{Tags: tags, Languages: langs})
+	router.WriteJSON(w, nethttp.StatusOK, facetsJSON{Tags: tags, Languages: langs, Sources: sources})
 }
 
 type listingsJSON struct {

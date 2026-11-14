@@ -37,13 +37,18 @@ type Network struct {
 	UserCount          *int       `json:"user_count,omitempty"`
 	UserCountAt        *time.Time `json:"user_count_at,omitempty"`
 	// Origin: local, or peer:<peer id> for listings imported from another directory.
-	Origin    string    `json:"origin"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	Origin string `json:"origin"`
+	// OriginName labels a peer origin (the peer's name or URL); null for local.
+	OriginName *string   `json:"origin_name"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
 	// RegisteredAt repeats CreatedAt (old /servers name).
 	RegisteredAt time.Time `json:"registered_at"`
-	// Owner is only shown to whoever may manage the listing.
-	Owner *Owner `json:"owner,omitempty"`
+	// Owner and the token fields are only shown to whoever may manage the listing.
+	Owner             *Owner     `json:"owner,omitempty"`
+	VerificationToken string     `json:"verification_token,omitempty"`
+	TokenIssuedAt     *time.Time `json:"token_issued_at,omitempty"`
+	TokenExpiresAt    *time.Time `json:"token_expires_at,omitempty"`
 }
 
 // Owner says who manages a listing.
@@ -130,6 +135,18 @@ func NewListing(n *network.Network, m media.MediaServiceImpl, manager bool, toke
 	if manager {
 		l.Network.Owner = OwnerOf(n)
 		l.Verification = NewVerification(n, tokenTTL)
+		issued, expires := n.TokenIssuedAt, n.TokenIssuedAt.Add(tokenTTL)
+		l.Network.VerificationToken, l.Network.TokenIssuedAt, l.Network.TokenExpiresAt = n.VerificationToken, &issued, &expires
 	}
 	return l
+}
+
+// PeerNames resolves a peer origin ("peer:<id>") to a label.
+type PeerNames func(origin string) *string
+
+// WithOriginName sets OriginName using names (nil-safe).
+func (v *Network) WithOriginName(names PeerNames) {
+	if v.Origin != network.OriginLocal && names != nil {
+		v.OriginName = names(v.Origin)
+	}
 }

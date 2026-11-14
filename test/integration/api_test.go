@@ -203,6 +203,9 @@ func TestNetworkKeyPath(t *testing.T) {
 	if n["hostname"] != "irc.example.org" || n["status"] != "pending" || n["origin"] != "local" {
 		t.Fatalf("network %v", n)
 	}
+	if n["verification_token"] != v["token"] || n["token_issued_at"] == nil || n["token_expires_at"] == nil || n["origin_name"] != nil {
+		t.Fatalf("owner token fields %v", n)
+	}
 	if v["record_name"] != "_boson.irc.example.org" || !strings.HasPrefix(v["record_value"].(string), "boson-verify=") || v["expires_at"] == nil {
 		t.Fatalf("verification %v", v)
 	}
@@ -256,7 +259,7 @@ func TestNetworkKeyPath(t *testing.T) {
 	}
 	// Now public.
 	pub := e.expect(e.do("GET", "/v1/networks/lookup?hostname=irc.example.org", "", nil), 200).m(t)
-	if pub["verification"] != nil || pub["network"].(map[string]any)["owner"] != nil {
+	if pn := pub["network"].(map[string]any); pub["verification"] != nil || pn["owner"] != nil || pn["verification_token"] != nil {
 		t.Fatalf("public lookup leaks owner data: %v", pub)
 	}
 	// Mine.
@@ -279,7 +282,9 @@ func TestNetworkKeyPath(t *testing.T) {
 	e.expect(e.do("POST", "/v1/networks", "Basic abc", body), 401)
 	// Invalid hostnames.
 	for _, h := range []string{"127.0.0.1", "localhost", "[::1]", "bad_host.example", ""} {
-		e.expect(e.do("POST", "/v1/networks", k, map[string]any{"hostname": h, "port": 6697, "name": "x"}), 400)
+		if e.expect(e.do("POST", "/v1/networks", k, map[string]any{"hostname": h, "port": 6697, "name": "x"}), 400).m(t)["error"] != "invalid_hostname" {
+			t.Fatal("want invalid_hostname")
+		}
 	}
 }
 

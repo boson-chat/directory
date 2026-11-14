@@ -19,6 +19,7 @@ const APIVersion = "1"
 type Handlers struct {
 	d          *router.Deps
 	writeLimit *ipLimiter
+	peers      peerCache
 }
 
 // New builds the core handlers.

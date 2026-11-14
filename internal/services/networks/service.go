@@ -210,7 +210,7 @@ func (s *NetworkService) Get(ctx context.Context, p *principal.Principal, id str
 func (s *NetworkService) Lookup(ctx context.Context, p *principal.Principal, host string) (*network.Network, error) {
 	h, err := hostname.Normalize(host)
 	if err != nil {
-		return nil, apperr.Invalid(err.Error())
+		return nil, apperr.New(400, "invalid_hostname", err.Error())
 	}
 	n, err := s.repo.GetByHostname(ctx, h)
 	if err != nil {
@@ -374,7 +374,7 @@ func (s *NetworkService) Create(ctx context.Context, p *principal.Principal, sub
 	}
 	host, err := hostname.Normalize(sub.Hostname)
 	if err != nil {
-		return nil, apperr.Invalid(err.Error() + "; its TXT record proves you run it")
+		return nil, apperr.New(400, "invalid_hostname", err.Error()+"; its TXT record proves you run it")
 	}
 	if sub.Port < 1 || sub.Port > 65535 {
 		return nil, apperr.Invalid("the port must be between 1 and 65535")
