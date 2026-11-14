@@ -45,6 +45,10 @@ func init() {
 		Start: func(ctx context.Context, d *router.Deps) error {
 			return serviceFor(d).EnsurePeers(ctx)
 		},
+		// The stack config file changed: builtin + directory.peers.
+		ConfigReloaded: func(ctx context.Context, d *router.Deps) error {
+			return serviceFor(d).ApplyConfigFile(ctx)
+		},
 	})
 }
 
@@ -139,6 +143,10 @@ type peerJSON struct {
 	ListingCount   int        `json:"listing_count"`
 	CreatedAt      time.Time  `json:"created_at"`
 	UpdatedAt      time.Time  `json:"updated_at"`
+	// ManagedByConfigFile: the stack config file owns this peer (listed in
+	// directory.peers, or the builtin while the file sets include_main);
+	// PATCH / DELETE answer 409 managed_by_config_file.
+	ManagedByConfigFile bool `json:"managed_by_config_file"`
 }
 
 // PeerJSON is p as the operator API returns it (for other modules).
@@ -151,6 +159,7 @@ func (h *handler) toJSON(p *peer.Peer) peerJSON {
 		ID: p.ID, URL: p.URL, Name: p.Name, API: p.API, Enabled: p.Enabled, Builtin: p.Builtin,
 		Active: h.svc.Active(p), Cursor: p.Cursor, LastSyncAt: p.LastSyncAt, LastFullSyncAt: p.LastFullSyncAt,
 		LastError: p.LastError, ListingCount: p.ListingCount, CreatedAt: p.CreatedAt, UpdatedAt: p.UpdatedAt,
+		ManagedByConfigFile: h.svc.ManagedByConfigFile(p),
 	}
 }
 

@@ -1,7 +1,10 @@
 # Two directories + Postgres + fake DNS/auth for `make test-federation`.
 # dir-a is the "main" directory (its DIRECTORY_MAIN_PEER points at itself,
 # so it must not peer with itself); dir-b includes dir-a as its built-in
-# main peer. Both verify DNS for real against the fakes container.
+# main peer. Both verify DNS for real against the fakes container. dir-c
+# runs in stack config file mode (BOSON_CONFIG): its settings and peers
+# come from ./config-c/boson.yaml (the directory is mounted read-only, like
+# the stack does; the Makefile creates it from boson.dir-c.yaml).
 name: directory-federation-e2e
 
 x-dir: &dir
@@ -40,7 +43,7 @@ services:
     ports:
       - "127.0.0.1:${E2E_PG_PORT:-47390}:5432"
     healthcheck:
-      test: ["CMD", "pg_isready", "-U", "directory", "-d", "dir_b"]
+      test: ["CMD", "pg_isready", "-U", "directory", "-d", "dir_c"]
       interval: 1s
       timeout: 3s
       retries: 60
@@ -81,3 +84,19 @@ services:
       DIRECTORY_INCLUDE_MAIN: ${B_INCLUDE_MAIN:-true}
     ports:
       - "127.0.0.1:${E2E_B_PORT:-47393}:8080"
+
+  dir-c:
+    <<: *dir
+    environment:
+      <<: *dir-env
+      DATABASE_URL: postgres://directory:e2e@postgres:5432/dir_c?sslmode=disable
+      PUBLIC_URL: http://dir-c:8080
+      DIRECTORY_NAME: directory C (env name, overridden by the file)
+      DIRECTORY_MAIN_PEER: http://dir-a:8080
+      BOSON_CONFIG: /config/boson.yaml
+      BOSON_CONFIG_POLL: 1s
+    volumes:
+      - ./config-c:/config:ro
+    ports:
+      - "127.0.0.1:${E2E_C_PORT:-47394}:8080"
+      - "127.0.0.1:${E2E_C_INTERNAL_PORT:-47395}:8081"

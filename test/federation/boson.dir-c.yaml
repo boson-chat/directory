@@ -1,0 +1,11 @@
+# Stack config file for dir-c in the federation docker test (copied to
+# config-c/boson.yaml by `make test-federation`; the test rewrites it).
+version: 1
+network:
+  name: e2e          # other services' sections are ignored
+directory:
+  name: directory C (file)
+  operator: e2e operator
+  include_main: false
+  main_peer_url: ""
+  peers: [http://dir-a:8080]

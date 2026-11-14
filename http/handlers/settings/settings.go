@@ -70,6 +70,11 @@ type settingsJSON struct {
 	PublicURL string    `json:"public_url"`
 	UpdatedAt time.Time `json:"updated_at"`
 	UpdatedBy *string   `json:"updated_by"`
+	// Source is "file" (stack config file: read-only here, PATCH answers
+	// 409 managed_by_config_file) or "db".
+	Source string `json:"source"`
+	// Peers are the config file's directory.peers (file mode, when set).
+	Peers []string `json:"peers,omitempty"`
 }
 
 func (h *handler) snapshot(r *nethttp.Request) (*settingsJSON, error) {
@@ -81,6 +86,10 @@ func (h *handler) snapshot(r *nethttp.Request) (*settingsJSON, error) {
 	out := &settingsJSON{
 		Settings: toValues(snap.Values), Defaults: toValues(snap.Defaults), Overridden: snap.Overridden,
 		IsMain: fed.IsMain(), PublicURL: h.d.Config.HTTPConfig.PublicURL, UpdatedAt: snap.UpdatedAt, UpdatedBy: snap.UpdatedBy,
+		Source: snap.Source,
+	}
+	if f := h.d.Settings.File(); f != nil && f.PeersSet {
+		out.Peers = f.Peers
 	}
 	mp, err := fed.MainPeer(r.Context())
 	if err != nil {
@@ -103,6 +112,10 @@ func (h *handler) get(w nethttp.ResponseWriter, r *nethttp.Request) {
 }
 
 func (h *handler) patch(w nethttp.ResponseWriter, r *nethttp.Request) {
+	if h.d.Settings.File() != nil {
+		router.WriteError(w, r, settings.ErrManagedByConfigFile)
+		return
+	}
 	var p settings.Patch
 	if err := router.Decode(w, r, &p); err != nil {
 		router.WriteError(w, r, err)

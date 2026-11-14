@@ -57,6 +57,10 @@ type Module struct {
 	// Start runs once after wiring, before the listeners (e.g. seeding the
 	// built-in peer). May be nil.
 	Start func(ctx context.Context, d *Deps) error
+	// ConfigReloaded runs after the stack config file (BOSON_CONFIG) was
+	// reloaded and d.Settings reflects it (not at start-up: Start sees the
+	// file already). May be nil.
+	ConfigReloaded func(ctx context.Context, d *Deps) error
 }
 
 var (

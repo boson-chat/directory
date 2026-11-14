@@ -11,6 +11,11 @@
 //
 // Readers use Current, an in-memory copy refreshed after every change in
 // this process and at most CacheTTL old elsewhere (other replicas).
+//
+// With the stack config file (BOSON_CONFIG, file.go) present, its
+// directory: section is the source of truth instead (SetFile): file > env
+// > default, the row is ignored and Update answers 409
+// managed_by_config_file.
 package settings
 
 import (
@@ -22,6 +27,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode"
 
@@ -128,6 +134,8 @@ type Snapshot struct {
 	Overridden []string
 	UpdatedAt  time.Time
 	UpdatedBy  *string
+	// Source is SourceFile (stack config file) or SourceDB.
+	Source string
 }
 
 type SettingsServiceImpl interface {
@@ -145,6 +153,10 @@ type SettingsServiceImpl interface {
 	// SeededPeers / MarkSeeded track DIRECTORY_PEERS URLs already seeded.
 	SeededPeers(ctx context.Context) ([]string, error)
 	MarkSeeded(ctx context.Context, urls []string) error
+	// SetFile switches to file mode with the file's values (nil: back to
+	// the database). File returns them (nil in database mode).
+	SetFile(f *FileValues)
+	File() *FileValues
 }
 
 // Deps are the service's collaborators.
@@ -158,7 +170,8 @@ type Deps struct {
 }
 
 type SettingsService struct {
-	d Deps
+	d    Deps
+	file atomic.Pointer[FileValues]
 
 	mu       sync.Mutex // serialises Update and cache refresh
 	cur      Values
@@ -230,7 +243,23 @@ func (s *SettingsService) Load(ctx context.Context) error {
 	return nil
 }
 
+func (s *SettingsService) SetFile(f *FileValues) {
+	if f != nil {
+		c := *f
+		f = &c
+	}
+	s.file.Store(f)
+	s.mu.Lock()
+	s.loaded = false // database mode again: re-read the row
+	s.mu.Unlock()
+}
+
+func (s *SettingsService) File() *FileValues { return s.file.Load() }
+
 func (s *SettingsService) Current() Values {
+	if f := s.file.Load(); f != nil {
+		return f.apply(s.d.Defaults)
+	}
 	s.mu.Lock()
 	fresh := s.loaded && s.d.Now().Sub(s.loadedAt) < CacheTTL
 	cur := s.cur
@@ -253,6 +282,9 @@ func (s *SettingsService) Current() Values {
 }
 
 func (s *SettingsService) Get(ctx context.Context) (*Snapshot, error) {
+	if f := s.file.Load(); f != nil {
+		return &Snapshot{Values: f.apply(s.d.Defaults), Defaults: s.d.Defaults, Overridden: f.fields(), Source: SourceFile}, nil
+	}
 	r, err := s.d.Repo.Get(ctx)
 	if err != nil {
 		return nil, err
@@ -261,7 +293,7 @@ func (s *SettingsService) Get(ctx context.Context) (*Snapshot, error) {
 	s.mu.Lock()
 	s.cur, s.loadedAt, s.loaded = v, s.d.Now(), true
 	s.mu.Unlock()
-	return &Snapshot{Values: v, Defaults: s.d.Defaults, Overridden: overridden(r), UpdatedAt: r.UpdatedAt, UpdatedBy: r.UpdatedBy}, nil
+	return &Snapshot{Values: v, Defaults: s.d.Defaults, Overridden: overridden(r), UpdatedAt: r.UpdatedAt, UpdatedBy: r.UpdatedBy, Source: SourceDB}, nil
 }
 
 func cleanText(field, v string, maxLen int, required bool) (string, error) {
@@ -308,6 +340,10 @@ func FormatDuration(d time.Duration) string {
 var ErrNoChanges = apperr.Invalid("nothing to change: send at least one of " + strings.Join(Fields, ", "))
 
 func (s *SettingsService) Update(ctx context.Context, pr *principal.Principal, p Patch) (Values, Values, error) {
+	if s.file.Load() != nil {
+		cur := s.Current()
+		return cur, cur, ErrManagedByConfigFile
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	r, err := s.d.Repo.Get(ctx)
@@ -466,10 +502,12 @@ func (s Static) Current() Values            { return s.V }
 func (s Static) Defaults() Values           { return s.V }
 func (s Static) Load(context.Context) error { return nil }
 func (s Static) Get(context.Context) (*Snapshot, error) {
-	return &Snapshot{Values: s.V, Defaults: s.V, Overridden: []string{}}, nil
+	return &Snapshot{Values: s.V, Defaults: s.V, Overridden: []string{}, Source: SourceDB}, nil
 }
 func (s Static) Update(context.Context, *principal.Principal, Patch) (Values, Values, error) {
 	return s.V, s.V, errors.New("settings: static settings can't be changed")
 }
+func (s Static) SetFile(*FileValues)                           {}
+func (s Static) File() *FileValues                             { return nil }
 func (s Static) SeededPeers(context.Context) ([]string, error) { return nil, nil }
 func (s Static) MarkSeeded(context.Context, []string) error    { return nil }

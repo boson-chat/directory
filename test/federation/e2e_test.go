@@ -300,3 +300,176 @@ func TestTwoDirectories(t *testing.T) {
 	waitUp(t, urlB)
 	fmt.Println("federation e2e: all scenarios passed")
 }
+
+var (
+	urlC         = "http://127.0.0.1:" + env("E2E_C_PORT", "47394")
+	urlCInternal = "http://127.0.0.1:" + env("E2E_C_INTERNAL_PORT", "47395")
+	configC      = "config-c/boson.yaml"
+)
+
+// writeConfigC replaces dir-c's config file like the admin panel does
+// (tmp file in the same directory, then rename).
+func writeConfigC(t *testing.T, content string) {
+	t.Helper()
+	tmp := configC + ".tmp"
+	if err := os.WriteFile(tmp, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(tmp, configC); err != nil {
+		t.Fatal(err)
+	}
+}
+
+type configStatus struct {
+	OK              bool     `json:"ok"`
+	Present         bool     `json:"present"`
+	Error           string   `json:"error"`
+	ErrorLine       int      `json:"error_line"`
+	RestartRequired []string `json:"restart_required"`
+	LoadedAt        string   `json:"loaded_at"`
+}
+
+func statusC(t *testing.T) configStatus {
+	var st configStatus
+	if code := call(t, "GET", urlCInternal+"/internal/config/status", "", "", &st); code != 200 {
+		t.Fatalf("config status: %d", code)
+	}
+	return st
+}
+
+func wellKnownName(t *testing.T, u string) string {
+	var wk struct{ Name string }
+	call(t, "GET", u+"/.well-known/boson-directory.json", "", "", &wk)
+	return wk.Name
+}
+
+// dir-c runs with BOSON_CONFIG: settings and peers come from the file and
+// follow edits to it without a restart (the directory is a read-only bind
+// mount, so this also covers the mtime poll when fsnotify events don't
+// cross the mount).
+func TestConfigFileDirectory(t *testing.T) {
+	waitUp(t, urlA)
+	waitUp(t, urlC)
+	w := &world{t: t, dbA: openDB(t, "dir_a")}
+	dbC := openDB(t, "dir_c")
+	w.refreshToken()
+	onC := func(host string) string {
+		var status string
+		if err := dbC.QueryRow("SELECT status FROM networks WHERE hostname = $1", host).Scan(&status); err == sql.ErrNoRows {
+			return ""
+		} else if err != nil {
+			t.Fatal(err)
+		}
+		return status
+	}
+	type cpeer struct {
+		ID      string `json:"id"`
+		URL     string `json:"url"`
+		Enabled bool   `json:"enabled"`
+		Managed bool   `json:"managed_by_config_file"`
+	}
+	peersC := func() []cpeer {
+		var r struct {
+			Peers []cpeer `json:"peers"`
+		}
+		eventually(t, "list peers on C", 30*time.Second, func() bool {
+			code := call(t, "GET", urlC+"/v1/admin/peers", w.token, "", &r)
+			if code == 401 {
+				w.refreshToken()
+			}
+			return code == 200
+		})
+		return r.Peers
+	}
+
+	t.Log("settings come from the file and are read-only")
+	if st := statusC(t); !st.OK || !st.Present || len(st.RestartRequired) != 0 {
+		t.Fatalf("status: %+v", st)
+	}
+	if n := wellKnownName(t, urlC); n != "directory C (file)" {
+		t.Fatalf(".well-known name: %q", n)
+	}
+	var settings struct {
+		Source   string `json:"source"`
+		Settings struct {
+			Operator    string `json:"operator"`
+			IncludeMain bool   `json:"include_main"`
+		} `json:"settings"`
+	}
+	call(t, "GET", urlC+"/v1/admin/settings", w.token, "", &settings)
+	if settings.Source != "file" || settings.Settings.Operator != "e2e operator" || settings.Settings.IncludeMain {
+		t.Fatalf("settings: %+v", settings)
+	}
+	var e struct{ Error string }
+	if code := call(t, "PATCH", urlC+"/v1/admin/settings", w.token, `{"name":"x"}`, &e); code != 409 || e.Error != "managed_by_config_file" {
+		t.Fatalf("PATCH settings: %d %s", code, e.Error)
+	}
+
+	t.Log("the file's peer (A) exists, is enabled, is owned by the file and syncs")
+	ps := peersC()
+	if len(ps) != 1 || ps[0].URL != "http://dir-a:8080" || !ps[0].Enabled || !ps[0].Managed {
+		t.Fatalf("C peers: %+v", ps)
+	}
+	aID := ps[0].ID
+	if code := call(t, "PATCH", urlC+"/v1/admin/peers/"+aID, w.token, `{"enabled":false}`, &e); code != 409 || e.Error != "managed_by_config_file" {
+		t.Fatalf("PATCH file peer: %d %s", code, e.Error)
+	}
+	if code := call(t, "DELETE", urlC+"/v1/admin/peers/"+aID, w.token, "", nil); code != 409 {
+		t.Fatalf("DELETE file peer: %d", code)
+	}
+	w.seed(w.dbA, "net_01E2E00000000000000000000G", "irc.gamma.test")
+	w.publishTXT("irc.gamma.test", "tok-net_01E2E00000000000000000000G-e2e")
+	eventually(t, "gamma verified on C", time.Minute, func() bool {
+		call(t, "POST", urlC+"/v1/admin/peers/"+aID+"/sync", w.token, "", nil)
+		return onC("irc.gamma.test") == "verified"
+	})
+
+	t.Log("edit: rename, drop the peer → applied live; the peer is disabled, not deleted")
+	writeConfigC(t, `version: 1
+directory:
+  name: directory C (edited)
+  include_main: false
+  main_peer_url: ""
+  peers: []
+`)
+	eventually(t, "rename applied", 30*time.Second, func() bool { return wellKnownName(t, urlC) == "directory C (edited)" })
+	ps = peersC()
+	if len(ps) != 1 || ps[0].ID != aID || ps[0].Enabled || ps[0].Managed {
+		t.Fatalf("dropped peer: %+v", ps)
+	}
+	if s := onC("irc.gamma.test"); s != "" {
+		t.Fatalf("disabled peer's listings must go: %q", s)
+	}
+
+	t.Log("a broken edit keeps the last good config and is reported with its line")
+	writeConfigC(t, "version: 1\ndirectory:\n  name: directory C (broken)\n  sync_every: 1s\n")
+	eventually(t, "error status", 30*time.Second, func() bool { return !statusC(t).OK })
+	if st := statusC(t); st.ErrorLine != 4 || !strings.Contains(st.Error, "sync_every") {
+		t.Fatalf("status: %+v", st)
+	}
+	if n := wellKnownName(t, urlC); n != "directory C (edited)" {
+		t.Fatalf("last good config must stay: %q", n)
+	}
+
+	t.Log("fixed, peer listed again: re-enabled and managed; survives a restart")
+	writeConfigC(t, `version: 1
+directory:
+  name: directory C (file)
+  include_main: false
+  main_peer_url: ""
+  peers: [http://dir-a:8080]
+`)
+	eventually(t, "status ok", 30*time.Second, func() bool { return statusC(t).OK })
+	eventually(t, "peer re-enabled", 30*time.Second, func() bool {
+		ps := peersC()
+		return len(ps) == 1 && ps[0].ID == aID && ps[0].Enabled && ps[0].Managed
+	})
+	dockerCompose(t, nil, "restart", "dir-c")
+	waitUp(t, urlC)
+	if n := wellKnownName(t, urlC); n != "directory C (file)" {
+		t.Fatalf("after restart: %q", n)
+	}
+	if ps := peersC(); len(ps) != 1 || !ps[0].Enabled || !ps[0].Managed {
+		t.Fatalf("after restart: %+v", ps)
+	}
+}

@@ -43,12 +43,17 @@ test-integration:
 # Two directories + Postgres + fake DNS/auth in docker (test/federation):
 # import, local DNS re-verification, conflicts, blocks, deletes, the
 # built-in main peer and its persistent disable. Leaves nothing behind.
+# dir-c runs in stack config file mode (test/federation/config-c, mounted
+# read-only).
 FED_COMPOSE = docker compose -f test/federation/compose.yml
+FED_CONFIG_C = test/federation/config-c
 test-federation:
-	$(FED_COMPOSE) up -d --build --wait postgres fakes dir-a dir-b || ($(FED_COMPOSE) logs; $(FED_COMPOSE) down -v; exit 1)
+	rm -rf $(FED_CONFIG_C) && mkdir -p $(FED_CONFIG_C) && chmod 755 $(FED_CONFIG_C) && \
+		cp test/federation/boson.dir-c.yaml $(FED_CONFIG_C)/boson.yaml && chmod 644 $(FED_CONFIG_C)/boson.yaml
+	$(FED_COMPOSE) up -d --build --wait postgres fakes dir-a dir-b dir-c || ($(FED_COMPOSE) logs; $(FED_COMPOSE) down -v; rm -rf $(FED_CONFIG_C); exit 1)
 	(cd test/federation && go test -tags federation_e2e -count=1 -v -timeout 10m .); \
-		status=$$?; [ $$status -eq 0 ] || $(FED_COMPOSE) logs --tail 200 dir-a dir-b; \
-		$(FED_COMPOSE) down -v --remove-orphans; exit $$status
+		status=$$?; [ $$status -eq 0 ] || $(FED_COMPOSE) logs --tail 200 dir-a dir-b dir-c; \
+		$(FED_COMPOSE) down -v --remove-orphans; rm -rf $(FED_CONFIG_C); exit $$status
 
 lint:
 	go vet ./...

@@ -50,6 +50,9 @@ func init() {
 			return []workers.Worker{{Name: "federation-sync", Every: d.Config.FederationConfig.SyncEvery, Run: svc.SyncAll}}
 		},
 		Start: func(ctx context.Context, d *router.Deps) error { return svc.EnsureBuiltinPeer(ctx) },
+		// Optional: the stack config file (BOSON_CONFIG) was reloaded and
+		// d.Settings already reflects it.
+		ConfigReloaded: func(ctx context.Context, d *router.Deps) error { return svc.ApplyConfigFile(ctx) },
 	})
 }
 ```
