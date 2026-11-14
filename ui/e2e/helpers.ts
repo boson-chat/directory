@@ -1,4 +1,4 @@
-import { expect, type Page, type TestInfo } from '@playwright/test';
+import { expect, type Locator, type Page, type TestInfo } from '@playwright/test';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -53,4 +53,32 @@ export async function shoot(page: Page, info: TestInfo, name: string) {
 		});
 	}
 	await page.emulateMedia({ colorScheme: 'dark' });
+}
+
+type DropFile = { name: string; mimeType: string; buffer: Buffer };
+
+/** A DataTransfer carrying `files`, as the browser builds one for a real drag from the desktop. */
+export function fileTransfer(page: Page, files: DropFile[]) {
+	return page.evaluateHandle(
+		(fs) => {
+			const dt = new DataTransfer();
+			for (const f of fs) dt.items.add(new File([new Uint8Array(f.bytes)], f.name, { type: f.mimeType }));
+			return dt;
+		},
+		files.map((f) => ({ name: f.name, mimeType: f.mimeType, bytes: [...f.buffer] }))
+	);
+}
+
+/** Drags `files` over `target` (over a child, as a real pointer would) without dropping. */
+export async function dragOver(target: Locator, files: DropFile[]) {
+	const dataTransfer = await fileTransfer(target.page(), files);
+	await target.dispatchEvent('dragenter', { dataTransfer });
+	await target.dispatchEvent('dragover', { dataTransfer });
+	return dataTransfer;
+}
+
+/** Drags `files` onto `target` and drops them. */
+export async function dropFiles(target: Locator, files: DropFile[]) {
+	const dataTransfer = await dragOver(target, files);
+	await target.dispatchEvent('drop', { dataTransfer });
 }

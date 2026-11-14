@@ -3,6 +3,7 @@
 	import type { Listing } from '$lib/types';
 	import { errorText, toasts } from '$lib/toasts.svelte';
 	import { readTheme, slotValue, type ImageSlot } from '$lib/theme';
+	import { FileDrop } from '$lib/drop.svelte';
 
 	/** Upload or remove one theme image slot. Uploads go straight to the server. */
 	let {
@@ -28,13 +29,21 @@
 	let input = $state<HTMLInputElement>();
 	let url = $derived(slotValue(readTheme(listing.network.theme), slot));
 
-	async function picked(e: Event) {
+	function picked(e: Event) {
 		const el = e.currentTarget as HTMLInputElement;
 		const f = el.files?.[0];
 		el.value = '';
-		if (!f) return;
+		if (f) void upload(f);
+	}
+	const drop = new FileDrop(
+		(f) => void upload(f),
+		() => busy
+	);
+
+	async function upload(f: File) {
+		if (busy) return;
 		error = '';
-		if (!TYPES.includes(f.type)) return void (error = 'Use a PNG, JPEG, WebP, GIF or SVG image.');
+		if (!TYPES.includes(f.type)) return void (error = "That's not a PNG, JPEG, WebP, GIF or SVG image.");
 		if (f.size > MAX)
 			return void (error = `That file is ${(f.size / 1048576).toFixed(1)} MB; the limit is 2 MB.`);
 		busy = true;
@@ -63,7 +72,7 @@
 	}
 </script>
 
-<div class="ti">
+<div class="ti" class:over={drop.over} data-drop={slot} {@attach drop.attach}>
 	<span class="thumb" class:empty={!url} aria-hidden="true">
 		{#if url}<img src={url} alt="" />{/if}
 	</span>
@@ -96,6 +105,7 @@
 					aria-label="Remove {label.toLowerCase()}"
 					onclick={remove}>Remove</button
 				>{/if}
+			<small class="or" class:on={drop.over}>{drop.over ? 'Drop to upload' : 'or drop an image here'}</small>
 		</div>
 		{#if error}<small class="err" role="alert">{error}</small>{/if}
 	</div>
@@ -107,6 +117,13 @@
 		gap: var(--space-3);
 		align-items: flex-start;
 		min-width: 0;
+		border-radius: var(--radius-md);
+	}
+	.ti.over {
+		background: var(--accent-dim);
+		box-shadow: 0 0 0 var(--space-1) var(--accent-dim);
+		outline: 1px dashed var(--accent);
+		outline-offset: var(--space-1);
 	}
 	.thumb {
 		width: 56px;
@@ -152,7 +169,13 @@
 	}
 	.btns {
 		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
 		gap: var(--space-2);
 		margin-top: var(--space-1);
+	}
+	.or.on {
+		color: var(--accent-text);
+		font-weight: 600;
 	}
 </style>
