@@ -80,7 +80,11 @@ type wellKnownJSON struct {
 	Operator string `json:"operator"`
 	Contact  string `json:"contact"`
 	// Auth is the auth service whose accounts sign in here ("" = none).
-	Auth       string `json:"auth,omitempty"`
+	Auth string `json:"auth,omitempty"`
+	// AuthIssuer is the access-token issuer (AUTH_ISSUER) this directory
+	// accepts; clients compare it with their account's issuer to decide
+	// whether to send boson tokens here ("" = none).
+	AuthIssuer string `json:"auth_issuer,omitempty"`
 	Federation bool   `json:"federation"`
 }
 
@@ -89,6 +93,7 @@ func (h *Handlers) wellKnown(w nethttp.ResponseWriter, _ *nethttp.Request) {
 	w.Header().Set("Cache-Control", "public, max-age=300")
 	router.WriteJSON(w, nethttp.StatusOK, wellKnownJSON{
 		Name: c.DirectoryConfig.Name, API: c.HTTPConfig.PublicURL + "/v1", Version: APIVersion,
-		Operator: c.DirectoryConfig.Operator, Contact: c.DirectoryConfig.Contact, Auth: c.AuthConfig.PublicURL, Federation: true,
+		Operator: c.DirectoryConfig.Operator, Contact: c.DirectoryConfig.Contact, Auth: c.AuthConfig.PublicURL,
+		AuthIssuer: c.AuthConfig.Issuer, Federation: true,
 	})
 }

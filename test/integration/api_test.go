@@ -181,7 +181,8 @@ func TestSearchFacetsAndFilters(t *testing.T) {
 	}
 	// Well-known.
 	wk := e.expect(e.do("GET", "/.well-known/boson-directory.json", "", nil), 200).m(t)
-	if wk["federation"] != true || wk["api"] != "https://directory.test/v1" || wk["name"] != "test directory" {
+	if wk["federation"] != true || wk["api"] != "https://directory.test/v1" || wk["name"] != "test directory" ||
+		wk["auth_issuer"] != e.app.Config.AuthConfig.Issuer || wk["auth_issuer"] == "" {
 		t.Fatalf("well-known %v", wk)
 	}
 	// CORS * for anonymous reads.
