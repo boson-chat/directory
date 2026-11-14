@@ -26,6 +26,7 @@ func init() {
 			r.Public("GET /v1/feed", h.feed)
 			r.Operator("GET /v1/admin/peers", h.listPeers)
 			r.Operator("POST /v1/admin/peers", h.addPeer)
+			r.Operator("GET /v1/admin/peers/check", h.checkPeer)
 			r.Operator("GET /v1/admin/peers/{id}", h.getPeer)
 			r.Operator("PATCH /v1/admin/peers/{id}", h.updatePeer)
 			r.Operator("DELETE /v1/admin/peers/{id}", h.deletePeer)
@@ -49,6 +50,10 @@ var (
 	svcMu sync.Mutex
 	svcs  = map[*router.Deps]federation.FederationServiceImpl{}
 )
+
+// Service returns the federation service of the app wired with d (for
+// other modules, e.g. the core facets handler listing peer sources).
+func Service(d *router.Deps) federation.FederationServiceImpl { return serviceFor(d) }
 
 // serviceFor builds the service once per wired app (Routes, Workers and
 // Start share it).
@@ -161,6 +166,15 @@ func (h *handler) getPeer(w nethttp.ResponseWriter, r *nethttp.Request) {
 		return
 	}
 	router.WriteJSON(w, nethttp.StatusOK, map[string]any{"peer": h.toJSON(p)})
+}
+
+func (h *handler) checkPeer(w nethttp.ResponseWriter, r *nethttp.Request) {
+	u, wk, err := h.svc.CheckPeer(r.Context(), r.URL.Query().Get("url"))
+	if err != nil {
+		router.WriteError(w, r, err)
+		return
+	}
+	router.WriteJSON(w, nethttp.StatusOK, map[string]any{"url": u, "well_known": wk})
 }
 
 func (h *handler) addPeer(w nethttp.ResponseWriter, r *nethttp.Request) {

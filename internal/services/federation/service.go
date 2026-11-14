@@ -91,6 +91,11 @@ type FederationServiceImpl interface {
 	// Operator peer management.
 	ListPeers(ctx context.Context) ([]*peer.Peer, error)
 	GetPeer(ctx context.Context, id string) (*peer.Peer, error)
+	// CheckPeer normalises rawURL and fetches/validates its .well-known
+	// document without saving anything.
+	CheckPeer(ctx context.Context, rawURL string) (string, *WellKnown, error)
+	// Sources are the active peers, for the source filter / facets.
+	Sources(ctx context.Context) ([]Source, error)
 	// AddPeer validates the URL and the peer's .well-known document.
 	AddPeer(ctx context.Context, p *principal.Principal, rawURL, name string) (*peer.Peer, error)
 	UpdatePeer(ctx context.Context, p *principal.Principal, id string, u PeerUpdate) (*peer.Peer, error)
@@ -250,6 +255,45 @@ func cleanPeerName(v string) (string, error) {
 		return "", apperr.Invalid("the peer name must be at most 100 characters")
 	}
 	return v, nil
+}
+
+// Source is an active peer as a listing source (?source=<id>).
+type Source struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	URL  string `json:"url"`
+}
+
+func (s *FederationService) Sources(ctx context.Context) ([]Source, error) {
+	all, err := s.d.Peers.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := []Source{}
+	for _, p := range all {
+		if s.Active(p) {
+			out = append(out, Source{ID: p.ID, Name: p.Name, URL: p.URL})
+		}
+	}
+	return out, nil
+}
+
+func (s *FederationService) CheckPeer(ctx context.Context, rawURL string) (string, *WellKnown, error) {
+	u, err := NormalizeURL(rawURL, s.d.Strict)
+	if err != nil {
+		return "", nil, apperr.Invalid(err.Error())
+	}
+	if s.isSelfURL(u) {
+		return "", nil, ErrSelfPeer
+	}
+	wk, err := s.d.Client.FetchWellKnown(ctx, u)
+	if err != nil {
+		return "", nil, errUnreachable(err)
+	}
+	if s.isSelfWellKnown(wk) {
+		return "", nil, ErrSelfPeer
+	}
+	return u, wk, nil
 }
 
 func (s *FederationService) AddPeer(ctx context.Context, p *principal.Principal, rawURL, name string) (*peer.Peer, error) {

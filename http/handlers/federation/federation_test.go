@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	fedhandlers "github.com/boson-chat/directory/http/handlers/federation"
 	"github.com/boson-chat/directory/internal/db/repositories/network"
 	"github.com/boson-chat/directory/internal/services/federation"
 )
@@ -83,6 +84,21 @@ func TestAddPeerValidation(t *testing.T) {
 	}
 	if code := a.do("POST", "/v1/admin/peers", "op", map[string]string{"url": "http://127.0.0.1:1"}, &r); code != 502 || r.Error != "peer_unreachable" {
 		t.Fatalf("unreachable: %d %s", code, r.Error)
+	}
+	var chk struct {
+		URL       string               `json:"url"`
+		WellKnown federation.WellKnown `json:"well_known"`
+	}
+	if code := a.do("GET", "/v1/admin/peers/check?url="+b.URL+"/", "op", nil, &chk); code != 200 ||
+		chk.URL != b.URL || !chk.WellKnown.Federation || chk.WellKnown.API != b.URL+"/v1" {
+		t.Fatalf("check: %d %+v", code, chk)
+	}
+	if code := a.do("GET", "/v1/admin/peers/check?url="+a.URL, "op", nil, &r); code != 400 || r.Error != "self_peer" {
+		t.Fatalf("check self: %d %s", code, r.Error)
+	}
+	var none peersResp
+	if a.do("GET", "/v1/admin/peers", "op", nil, &none); len(none.Peers) != 0 {
+		t.Fatal("check must not save a peer")
 	}
 	id := a.addPeer(b.URL + "/")
 	if code := a.do("POST", "/v1/admin/peers", "op", map[string]string{"url": b.URL}, &r); code != 409 || r.Error != "peer_exists" {
@@ -360,8 +376,15 @@ func TestDisableAndDeletePeer(t *testing.T) {
 	a.local("irc.one.test", network.StatusVerified)
 	id := b.addPeer(a.URL)
 	b.sync(id)
+	src, err := fedhandlers.Service(b.App.Deps).Sources(context.Background())
+	if err != nil || len(src) != 1 || src[0].ID != id || src[0].URL != a.URL {
+		t.Fatalf("sources: %+v %v", src, err)
+	}
 	var r peerResp
 	b.do("PATCH", "/v1/admin/peers/"+id, "op", map[string]any{"enabled": false}, &r)
+	if src, _ := fedhandlers.Service(b.App.Deps).Sources(context.Background()); len(src) != 0 {
+		t.Fatalf("disabled peer is not a source: %+v", src)
+	}
 	if r.Peer.Enabled || r.Peer.ListingCount != 0 || b.byHost("irc.one.test") != nil {
 		t.Fatalf("disable must remove listings: %+v", r.Peer)
 	}
