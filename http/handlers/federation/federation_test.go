@@ -90,7 +90,8 @@ func TestAddPeerValidation(t *testing.T) {
 		WellKnown federation.WellKnown `json:"well_known"`
 	}
 	if code := a.do("GET", "/v1/admin/peers/check?url="+b.URL+"/", "op", nil, &chk); code != 200 ||
-		chk.URL != b.URL || !chk.WellKnown.Federation || chk.WellKnown.API != b.URL+"/v1" {
+		chk.URL != b.URL || !chk.WellKnown.Federation || chk.WellKnown.API != b.URL+"/v1" ||
+		chk.WellKnown.AuthIssuer != "https://auth.test" {
 		t.Fatalf("check: %d %+v", code, chk)
 	}
 	if code := a.do("GET", "/v1/admin/peers/check?url="+a.URL, "op", nil, &r); code != 400 || r.Error != "self_peer" {

@@ -27,8 +27,6 @@ x-dir-env: &dir-env
   VERIFY_WORKER_TICK: 3s
   VERIFY_PENDING_EVERY: 3s
   DIRECTORY_SYNC_EVERY: 10s
-  # The image's anonymous /data volume is root-owned (core Dockerfile); use tmp.
-  MEDIA_DIR: /tmp/media
 
 services:
   postgres:

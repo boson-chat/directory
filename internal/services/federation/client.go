@@ -187,6 +187,8 @@ type WellKnown struct {
 	Version    string `json:"version"`
 	Operator   string `json:"operator"`
 	Contact    string `json:"contact"`
+	Auth       string `json:"auth,omitempty"`
+	AuthIssuer string `json:"auth_issuer,omitempty"`
 	Federation bool   `json:"federation"`
 }
 

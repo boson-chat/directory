@@ -121,6 +121,7 @@ func (in *instance) config() config.Config {
 	cfg.AppConfig.Env = "test"
 	cfg.DBConfig.URL = in.DSN
 	cfg.HTTPConfig.PublicURL = in.URL
+	cfg.AuthConfig.Issuer = "https://auth.test"
 	cfg.FederationConfig.MainPeer = ""
 	cfg.FederationConfig.IncludeMain = true
 	cfg.FederationConfig.Peers = ""

@@ -126,7 +126,7 @@ type Deps struct {
 	// MediaURL turns a stored icon/banner key into its public URL.
 	MediaURL func(key string) string
 	Config   config.FederationConfig
-	// PublicURL is this directory's PUBLIC_URL.
+	// PublicURL is this directory's DIRECTORY_PUBLIC_URL (self-detection).
 	PublicURL string
 	// Strict: ENV=production (https peers, public IPs, https image URLs).
 	Strict bool
@@ -154,10 +154,8 @@ func NewFederationService(d Deps) *FederationService {
 		d.Tx = db.NoTx{}
 	}
 	s := &FederationService{d: d, self: map[string]bool{}}
-	for _, u := range []string{d.PublicURL, d.Config.PublicURL} {
-		if n, err := NormalizeURL(u, false); err == nil {
-			s.self[n] = true
-		}
+	if n, err := NormalizeURL(d.PublicURL, false); err == nil {
+		s.self[n] = true
 	}
 	return s
 }

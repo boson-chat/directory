@@ -80,8 +80,8 @@ shared with "sync now") pulls each active peer:
 - `DIRECTORY_INCLUDE_MAIN=false` hides it from the API and removes its
   listings; the row (and the operator's choice) is kept for when it is
   turned back on. Changing `DIRECTORY_MAIN_PEER` re-points the row.
-- A directory never peers with itself: `PUBLIC_URL` / `DIRECTORY_PUBLIC_URL`
-  equal to the peer URL, or the peer's `.well-known` `api` pointing back
+- A directory never peers with itself: `DIRECTORY_PUBLIC_URL` (or
+  `PUBLIC_URL`) equal to the peer URL, or the peer's `.well-known` `api` pointing back
   here, both count. directory.boson.chat therefore has no builtin peer.
 - `DIRECTORY_PEERS` (comma-separated URLs) seeds extra peers on start
   (only if missing).
@@ -106,7 +106,6 @@ shared with "sync now") pulls each active peer:
 | `DIRECTORY_MAIN_PEER` | `https://directory.boson.chat` | built-in main peer |
 | `DIRECTORY_INCLUDE_MAIN` | `true` | include it |
 | `DIRECTORY_PEERS` | | extra peer URLs seeded on start |
-| `DIRECTORY_PUBLIC_URL` | | extra self URL (besides `PUBLIC_URL`) |
 | `DIRECTORY_SYNC_EVERY` | `10m` | worker interval |
 | `DIRECTORY_SYNC_ENABLED` | `true` | run the worker |
 | `DIRECTORY_PEER_TIMEOUT` | `15s` | |

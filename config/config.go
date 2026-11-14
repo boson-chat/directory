@@ -177,9 +177,6 @@ type FederationConfig struct {
 	SyncEvery time.Duration `default:"10m" env:"DIRECTORY_SYNC_EVERY"`
 	// Run the background sync worker (sync-now still works when off).
 	SyncEnabled bool `default:"true" env:"DIRECTORY_SYNC_ENABLED"`
-	// Extra URL this directory is reachable at, for self-detection (a
-	// directory never peers with itself). PUBLIC_URL always counts.
-	PublicURL string `env:"DIRECTORY_PUBLIC_URL"`
 	// Per-request timeout for peer calls (.well-known, one feed page).
 	PeerTimeout time.Duration `default:"15s" env:"DIRECTORY_PEER_TIMEOUT"`
 	// Upper bound for one whole peer sync.
@@ -237,7 +234,6 @@ func (c *Config) ApplyDefaults() {
 	}
 	c.MediaConfig.PublicURL = strings.TrimRight(c.MediaConfig.PublicURL, "/")
 	c.FederationConfig.MainPeer = strings.TrimRight(c.FederationConfig.MainPeer, "/")
-	c.FederationConfig.PublicURL = strings.TrimRight(c.FederationConfig.PublicURL, "/")
 }
 
 // Validate checks settings that would otherwise fail confusingly later.
