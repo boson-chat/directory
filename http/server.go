@@ -185,7 +185,8 @@ func Build(ctx context.Context, cfg config.Config, opts Options) (*App, error) {
 		if err != nil {
 			return fail(err)
 		}
-		csp := s.CSP()
+		// The UI signs people in against the auth service from the browser.
+		csp := s.CSP(spa.Origin(cfg.AuthConfig.PublicURL))
 		// Listing images can come from any directory's media host.
 		csp = strings.Replace(csp, "img-src 'self' data:", "img-src 'self' data: https:", 1)
 		publicMux.Handle("GET /", withCSP(csp, s))
