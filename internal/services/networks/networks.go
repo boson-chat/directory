@@ -119,6 +119,11 @@ type NetworkServiceImpl interface {
 	RegenerateToken(ctx context.Context, p *principal.Principal, id string) (*network.Network, error)
 	// SetImage stores (raw != nil) or clears an icon/banner.
 	SetImage(ctx context.Context, p *principal.Principal, id string, kind ImageKind, raw []byte) (*network.Network, error)
+	// Moderate is the operator's block | unblock | recheck of one listing
+	// (any origin). recheck returns the DNS report.
+	Moderate(ctx context.Context, p *principal.Principal, id string, action ModerationAction, reason string) (*network.Network, *dnsverify.Report, error)
+	// RetryAfter is how long until the owner may check id again.
+	RetryAfter(id string) time.Duration
 	// CanManage reports whether p may manage n.
 	CanManage(p *principal.Principal, n *network.Network) bool
 
@@ -130,6 +135,15 @@ type NetworkServiceImpl interface {
 	// Options exposes the verification timings (TXT expiry for the UI).
 	Options() Options
 }
+
+// ModerationAction is an operator action on one listing.
+type ModerationAction string
+
+const (
+	ModerateBlock   ModerationAction = "block"
+	ModerateUnblock ModerationAction = "unblock"
+	ModerateRecheck ModerationAction = "recheck"
+)
 
 // ImageKind is icon or banner.
 type ImageKind string

@@ -259,6 +259,20 @@ func (r *NetworkRepository) Facets(ctx context.Context, includeNSFW bool, limit 
 	return tags, langs, nil
 }
 
+func (r *NetworkRepository) OriginCounts(ctx context.Context, includeNSFW bool) (map[string]int64, error) {
+	var rows []struct {
+		Origin string
+		Count  int64
+	}
+	err := r.db.Conn(ctx).Raw(`SELECT origin, count(*) AS count FROM networks
+		WHERE status = 'verified' AND (? OR NOT is_nsfw) GROUP BY origin`, includeNSFW).Scan(&rows).Error
+	out := map[string]int64{}
+	for _, x := range rows {
+		out[x.Origin] = x.Count
+	}
+	return out, err
+}
+
 func (r *NetworkRepository) Update(ctx context.Context, n *Network, columns ...string) error {
 	if len(columns) == 0 {
 		return nil

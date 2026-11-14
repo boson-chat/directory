@@ -208,6 +208,9 @@ type NetworkRepositoryImpl interface {
 	// Facets counts tags and languages over the verified listings
 	// (NSFW only when includeNSFW), most used first.
 	Facets(ctx context.Context, includeNSFW bool, limit int) (tags, languages []Facet, err error)
+	// OriginCounts counts verified listings per origin (NSFW only when
+	// includeNSFW).
+	OriginCounts(ctx context.Context, includeNSFW bool) (map[string]int64, error)
 	// Update writes the named columns of n.
 	Update(ctx context.Context, n *Network, columns ...string) error
 	Delete(ctx context.Context, id string) error

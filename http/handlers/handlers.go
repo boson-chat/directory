@@ -17,15 +17,22 @@ const APIVersion = "1"
 
 // Handlers holds the core module's dependencies.
 type Handlers struct {
-	d *router.Deps
+	d          *router.Deps
+	writeLimit *ipLimiter
+	peers      peerCache
+}
+
+// New builds the core handlers.
+func New(d *router.Deps) *Handlers {
+	dc := d.Config.DirectoryConfig
+	return &Handlers{d: d, writeLimit: newIPLimiter(dc.WritesPerMinute, dc.WriteBurst)}
 }
 
 func init() {
 	router.Register(router.Module{
 		Name: "core",
 		Routes: func(d *router.Deps, r *router.Router) error {
-			h := &Handlers{d: d}
-			h.RegisterPublic(r)
+			New(d).Register(r)
 			return nil
 		},
 		Workers: coreWorkers,
@@ -58,16 +65,22 @@ func coreWorkers(d *router.Deps) []workers.Worker {
 	return out
 }
 
-func (h *Handlers) RegisterPublic(r *router.Router) {
+// Register mounts every core route.
+func (h *Handlers) Register(r *router.Router) {
 	r.Public("GET /.well-known/boson-directory.json", h.wellKnown)
+	h.registerAPI(r)
+	h.registerAdmin(r)
+	h.registerLegacy(r)
 }
 
 type wellKnownJSON struct {
-	Name       string `json:"name"`
-	API        string `json:"api"`
-	Version    string `json:"version"`
-	Operator   string `json:"operator"`
-	Contact    string `json:"contact"`
+	Name     string `json:"name"`
+	API      string `json:"api"`
+	Version  string `json:"version"`
+	Operator string `json:"operator"`
+	Contact  string `json:"contact"`
+	// Auth is the auth service whose accounts sign in here ("" = none).
+	Auth       string `json:"auth,omitempty"`
 	Federation bool   `json:"federation"`
 }
 
@@ -76,6 +89,6 @@ func (h *Handlers) wellKnown(w nethttp.ResponseWriter, _ *nethttp.Request) {
 	w.Header().Set("Cache-Control", "public, max-age=300")
 	router.WriteJSON(w, nethttp.StatusOK, wellKnownJSON{
 		Name: c.DirectoryConfig.Name, API: c.HTTPConfig.PublicURL + "/v1", Version: APIVersion,
-		Operator: c.DirectoryConfig.Operator, Contact: c.DirectoryConfig.Contact, Federation: true,
+		Operator: c.DirectoryConfig.Operator, Contact: c.DirectoryConfig.Contact, Auth: c.AuthConfig.PublicURL, Federation: true,
 	})
 }
