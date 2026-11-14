@@ -139,13 +139,18 @@ type peer struct {
 
 func (w *world) peers(u string) []peer {
 	w.t.Helper()
-	var r struct {
-		Peers []peer `json:"peers"`
-	}
-	if code := call(w.t, "GET", u+"/v1/admin/peers", w.token, "", &r); code != 200 {
-		w.t.Fatalf("list peers %s: %d", u, code)
-	}
-	return r.Peers
+	var list []peer
+	// Right after a (re)start the directory may not have loaded the
+	// issuer's JWKS yet and answers 401 for a moment.
+	eventually(w.t, "list peers on "+u, 30*time.Second, func() bool {
+		var r struct {
+			Peers []peer `json:"peers"`
+		}
+		code := call(w.t, "GET", u+"/v1/admin/peers", w.token, "", &r)
+		list = r.Peers
+		return code == 200
+	})
+	return list
 }
 
 // syncB nudges B's sync of peer id (409 = the worker is already on it).
