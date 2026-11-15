@@ -144,14 +144,25 @@ function themeError(t) {
 	if (t.version !== undefined && t.version !== 1) return 'theme version must be 1';
 	if (t.base !== undefined && t.base !== 'dark' && t.base !== 'light')
 		return 'theme base must be dark or light';
-	for (const [k, v] of Object.entries(t.colors ?? {}))
-		if (!HEX.test(v)) return `theme colour ${k} must be #rrggbb`;
-	for (const [k, p] of Object.entries(t.panes ?? {})) {
-		if (p.bg && !HEX.test(p.bg)) return `panes.${k}.bg must be #rrggbb`;
-		if (p.dim !== undefined && !(p.dim >= 0 && p.dim <= 1))
-			return `theme panes.${k}.dim must be between 0 and 1`;
-		if (p.blur !== undefined && !(p.blur >= 0 && p.blur <= 24))
-			return `theme panes.${k}.blur must be between 0 and 24`;
+	const look = (l, prefix) => {
+		for (const [k, v] of Object.entries(l.colors ?? {}))
+			if (!HEX.test(v)) return `theme ${prefix}colour ${k} must be #rrggbb`;
+		for (const [k, p] of Object.entries(l.panes ?? {})) {
+			if (p.bg && !HEX.test(p.bg)) return `${prefix}panes.${k}.bg must be #rrggbb`;
+			if (p.dim !== undefined && !(p.dim >= 0 && p.dim <= 1))
+				return `theme ${prefix}panes.${k}.dim must be between 0 and 1`;
+			if (p.blur !== undefined && !(p.blur >= 0 && p.blur <= 24))
+				return `theme ${prefix}panes.${k}.blur must be between 0 and 24`;
+		}
+		return null;
+	};
+	const bad = look(t, '');
+	if (bad) return bad;
+	const other = t.base === 'light' ? 'dark' : 'light';
+	const v = t.variants?.[other];
+	if (v) {
+		const vbad = look(v, `variants.${other}.`);
+		if (vbad) return vbad;
 	}
 	if (JSON.stringify(t).length > 16384) return 'the theme is too large (16 KB at most)';
 	return null;
@@ -494,6 +505,10 @@ async function apiRoutes(req, res, path, url) {
 				if (bad) return err(res, 400, 'invalid_theme', bad);
 				const cur = n.theme ?? {};
 				const next = { ...b, version: 1, base: b.base ?? 'dark' };
+				// Only the variant for the other base is kept.
+				const other = next.base === 'light' ? 'dark' : 'light';
+				if (next.variants?.[other]) next.variants = { [other]: next.variants[other] };
+				else delete next.variants;
 				// Image fields: omitted/null keep the current image, "" removes it.
 				for (const k of ['logo', 'logo_wide', 'login_background']) {
 					if (next[k] == null && cur[k]) next[k] = cur[k];

@@ -36,7 +36,8 @@ network's `_boson.<hostname>` TXT record itself.
 - `theme` (boson-theme/1, absolute image URLs) is omitted when the listing has
   none. Importers validate it with the owner-write rules and hot-link its
   images; an invalid theme is dropped without rejecting the listing. A page
-  ends early (`has_more: true`) once its themes reach 3 MiB.
+  ends early (`has_more: true`) once its themes reach 3 MiB. Its optional
+  `variants.<dark|light>` (the version for the other base) travels with it.
 
 ## Peers (operator API, `directory.manage`)
 

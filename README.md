@@ -103,7 +103,10 @@ Wrong owner: 403 `not_owner` for a public (verified) listing, 404 for one you ca
  "nick": {"saturation": 62, "lightness": 64}, "radius": 2, "font": "boson",
  "panes": {"servers": {"bg": "#0b0b10"},
            "messages": {"image": "https://…", "dim": 0.7, "blur": 8, "position": "center"}},
- "logo": "https://…", "logo_wide": "https://…", "login_background": "https://…"}
+ "logo": "https://…", "logo_wide": "https://…", "login_background": "https://…",
+ "variants": {"light": {"colors": {"bg": "#f5f9f6", "fg": "#0f1a14", "accent": "#0d7a45"},
+                        "nick": {"saturation": 60, "lightness": 36},
+                        "panes": {"servers": {"bg": "#e7efea", "dim": 0.4}}}}}
 ```
 
 - `colors` keys are the client's theme tokens (`bg surface surface-raised surface-hover border
@@ -112,6 +115,12 @@ Wrong owner: 403 `not_owner` for a public (verified) listing, 404 for one you ca
 - `base` dark|light (default dark), `nick.*` 0–100, `radius` 0–12, `font` boson|system; panes
   `servers|channels|messages|members` with `bg`, `image`, `dim` 0–1, `blur` 0–24, `position`
   center|top|bottom|left|right. Unknown keys are dropped; at most 16 KB.
+- `variants` (optional) carries the version for the other base: only `variants.<other base>` is
+  kept (one equal to `base` is dropped). It has `colors`, `nick` and `panes` with the same rules;
+  its panes override the primary's field by field (a pane's image is the primary's unless the
+  variant gives an https `image`). `{}` means Boson's own look for that base. `radius`, `font` and
+  the images stay top-level and shared. Readers pick the variant matching their dark/light mode
+  and otherwise use the primary.
 - Images are uploaded per slot (above) and stored on this directory's media host. In `PUT
   /theme` an image field that is omitted or `null` keeps the current image, `""` removes it, the
   URL `GET` returned keeps it, and any other https URL is hot-linked as is (how a stack pushes

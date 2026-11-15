@@ -2,6 +2,7 @@
 	import type { Network } from '$lib/types';
 	import { address, joinUrl, langName, originLabel } from '$lib/links';
 	import { listingAccent, listingStyle, readTheme } from '$lib/theme';
+	import { scheme } from '$lib/scheme.svelte';
 	import NetworkIcon from './NetworkIcon.svelte';
 	import Health from './Health.svelte';
 
@@ -9,8 +10,8 @@
 	let bannerFailed = $state(false);
 	// The network's own colours, where they read (see listingStyle).
 	let theme = $derived(readTheme(n.theme));
-	let style = $derived(listingStyle(theme));
-	let accent = $derived(listingAccent(theme));
+	let style = $derived(listingStyle(theme, scheme.current));
+	let accent = $derived(listingAccent(theme, scheme.current));
 </script>
 
 <article class="card" class:themed={!!style} aria-labelledby="nc-{n.id}" {style}>

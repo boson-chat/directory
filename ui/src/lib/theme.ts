@@ -42,6 +42,17 @@ export interface ThemePane {
 	position?: PanePosition;
 }
 
+/**
+ * The version of a theme for the base that isn't its own: colours (missing
+ * tokens come from Boson's built-in of that base), nick colours and pane
+ * overrides laid over the primary panes. `{}` is Boson's own look.
+ */
+export interface ThemeVariant {
+	colors?: Partial<ThemeColors>;
+	nick?: { saturation?: number; lightness?: number };
+	panes?: Partial<Record<PaneName, ThemePane>>;
+}
+
 /** The document as the API returns it (every field optional but version/base). */
 export interface BosonTheme {
 	version: 1;
@@ -54,6 +65,34 @@ export interface BosonTheme {
 	logo?: string;
 	logo_wide?: string;
 	login_background?: string;
+	/** Only the base that isn't `base`. */
+	variants?: Partial<Record<ThemeBase, ThemeVariant>>;
+}
+
+export const otherBase = (b: ThemeBase): ThemeBase => (b === 'dark' ? 'light' : 'dark');
+
+/**
+ * The theme as seen in `scheme` (the reader's dark/light mode): the
+ * variant for it when there is one (its colours and nick, the primary
+ * panes overlaid by its panes), else the primary. Never has variants.
+ */
+export function themeFor(t: BosonTheme, scheme: ThemeBase): BosonTheme {
+	const { variants, ...primary } = t;
+	const v = scheme !== t.base ? variants?.[scheme] : undefined;
+	if (!v) return primary;
+	const out: BosonTheme = { ...primary, base: scheme };
+	delete out.colors;
+	delete out.nick;
+	delete out.panes;
+	if (v.colors && Object.keys(v.colors).length) out.colors = { ...v.colors };
+	if (v.nick) out.nick = { ...v.nick };
+	const panes: BosonTheme['panes'] = {};
+	for (const name of PANES) {
+		const p = { ...(t.panes?.[name] ?? {}), ...(v.panes?.[name] ?? {}) };
+		if (Object.keys(p).length) panes[name] = p;
+	}
+	if (Object.keys(panes).length) out.panes = panes;
+	return out;
 }
 
 /** The image slots of PUT /v1/networks/{id}/theme-images/{slot}. */
@@ -156,6 +195,26 @@ export function readTheme(v: unknown): BosonTheme | null {
 			? (x as string)
 			: undefined;
 	const t: BosonTheme = { version: 1, base: o.base === 'light' ? 'light' : 'dark' };
+	Object.assign(t, readLook(o, img));
+	const r = num(o.radius, 0, MAX_RADIUS);
+	if (r !== undefined) t.radius = r;
+	if (o.font === 'boson' || o.font === 'system') t.font = o.font;
+	for (const k of ['logo', 'logo_wide', 'login_background'] as const) {
+		const u = img(o[k]);
+		if (u) t[k] = u;
+	}
+	const other = otherBase(t.base);
+	const vs = o.variants as Record<string, unknown> | undefined;
+	const vr = vs && typeof vs === 'object' ? vs[other] : undefined;
+	if (vr && typeof vr === 'object' && !Array.isArray(vr)) {
+		t.variants = { [other]: readLook(vr as Record<string, unknown>, img) };
+	}
+	return t;
+}
+
+/** The colours, nick and panes of a theme or variant, invalid fields dropped. */
+function readLook(o: Record<string, unknown>, img: (x: unknown) => string | undefined): ThemeVariant {
+	const t: ThemeVariant = {};
 	if (o.colors && typeof o.colors === 'object') {
 		const c: Partial<ThemeColors> = {};
 		for (const { key } of THEME_TOKENS) {
@@ -170,11 +229,8 @@ export function readTheme(v: unknown): BosonTheme | null {
 		const l = num(n.lightness, 0, 100);
 		if (s !== undefined || l !== undefined) t.nick = { saturation: s, lightness: l };
 	}
-	const r = num(o.radius, 0, MAX_RADIUS);
-	if (r !== undefined) t.radius = r;
-	if (o.font === 'boson' || o.font === 'system') t.font = o.font;
 	if (o.panes && typeof o.panes === 'object') {
-		const panes: BosonTheme['panes'] = {};
+		const panes: ThemeVariant['panes'] = {};
 		for (const name of PANES) {
 			const p = (o.panes as Record<string, unknown>)[name];
 			if (!p || typeof p !== 'object') continue;
@@ -191,10 +247,6 @@ export function readTheme(v: unknown): BosonTheme | null {
 			if (Object.keys(out).length) panes[name] = out;
 		}
 		if (Object.keys(panes).length) t.panes = panes;
-	}
-	for (const k of ['logo', 'logo_wide', 'login_background'] as const) {
-		const u = img(o[k]);
-		if (u) t[k] = u;
 	}
 	return t;
 }
@@ -250,10 +302,12 @@ export function contrastIssues(t: BosonTheme): ContrastIssue[] {
  * colours, guarded: surfaces and text only apply when the theme sets its
  * own surfaces and its text reads at 4.5:1 or better on them; the accent
  * only applies when the text on it does too. Anything that fails keeps the
- * directory's defaults.
+ * directory's defaults. `scheme` (the page's dark/light mode) picks the
+ * theme's variant for it, when it has one.
  */
-export function listingStyle(t: BosonTheme | null | undefined): string {
-	if (!t) return '';
+export function listingStyle(theme: BosonTheme | null | undefined, scheme?: ThemeBase): string {
+	if (!theme) return '';
+	const t = themeFor(theme, scheme ?? theme.base);
 	const c = resolveColors(t);
 	const own = t.colors ?? {};
 	const vars: Record<string, string> = {};
@@ -305,23 +359,38 @@ export function listingStyle(t: BosonTheme | null | undefined): string {
 }
 
 /** The accent a listing may use (guarded as in listingStyle), or null. */
-export function listingAccent(t: BosonTheme | null | undefined): string | null {
-	const m = /--accent: (#[0-9a-f]{6})/.exec(listingStyle(t));
+export function listingAccent(t: BosonTheme | null | undefined, scheme?: ThemeBase): string | null {
+	const m = /--accent: (#[0-9a-f]{6})/.exec(listingStyle(t, scheme));
 	return m ? m[1] : null;
 }
 
 // ---- editor helpers ----
 
-/** A copy without empty colour maps and panes, ready to PUT. */
+/**
+ * A copy without empty colour maps and panes, ready to PUT. Keeps only the
+ * variant for the other base (an empty one too: it means Boson's own look).
+ */
 export function cleanTheme(t: BosonTheme): BosonTheme {
 	const out: BosonTheme = JSON.parse(JSON.stringify(t));
-	if (out.colors && !Object.keys(out.colors).length) delete out.colors;
-	if (out.panes) {
-		for (const name of PANES) {
-			const p = out.panes[name];
-			if (p && !Object.values(p).some((v) => v !== undefined && v !== '')) delete out.panes[name];
+	const tidy = (l: ThemeVariant) => {
+		if (l.colors && !Object.keys(l.colors).length) delete l.colors;
+		if (l.nick && l.nick.saturation === undefined && l.nick.lightness === undefined) delete l.nick;
+		if (l.panes) {
+			for (const name of PANES) {
+				const p = l.panes[name];
+				if (p && !Object.values(p).some((v) => v !== undefined && v !== '')) delete l.panes[name];
+			}
+			if (!Object.keys(l.panes).length) delete l.panes;
 		}
-		if (!Object.keys(out.panes).length) delete out.panes;
+	};
+	tidy(out);
+	if (out.variants) {
+		const other = otherBase(out.base);
+		const v = out.variants[other];
+		if (v) {
+			tidy(v);
+			out.variants = { [other]: v };
+		} else delete out.variants;
 	}
 	return out;
 }

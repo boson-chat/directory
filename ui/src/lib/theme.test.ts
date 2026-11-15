@@ -9,6 +9,7 @@ import {
 	resolveColors,
 	slotValue,
 	THEME_TOKENS,
+	themeFor,
 	type BosonTheme
 } from './theme';
 
@@ -131,5 +132,101 @@ describe('helpers', () => {
 		expect(t).toEqual({ version: 1, base: 'dark', panes: { messages: { image: '/m.png' } } });
 		expect(slotValue(t, 'pane-messages')).toBe('/m.png');
 		expect(slotValue(t, 'logo')).toBeUndefined();
+	});
+});
+
+// IRC Forever's dark theme with a light version.
+const LIGHT = {
+	bg: '#f5f9f6',
+	surface: '#ffffff',
+	'surface-raised': '#ffffff',
+	'surface-hover': '#e7efea',
+	border: '#cfdcd4',
+	'border-soft': '#e1eae4',
+	fg: '#0f1a14',
+	'fg-2': '#2c3e34',
+	'fg-3': '#46594e',
+	muted: '#5a6c62',
+	meta: '#74857b',
+	accent: '#0d7a45',
+	'accent-on': '#ffffff',
+	success: '#11733f',
+	warn: '#8a5a00',
+	danger: '#b42318',
+	info: '#0b62a3'
+};
+const IRCF: BosonTheme = {
+	version: 1,
+	base: 'dark',
+	colors: { accent: '#70d199', 'accent-on': '#06140c', bg: '#0c0f12', surface: '#11161a', fg: '#e6efe9' },
+	nick: { saturation: 58, lightness: 68 },
+	panes: { servers: { bg: '#090c0e' }, messages: { image: '/m.png', dim: 0.7 } },
+	radius: 4,
+	logo: '/logo.png',
+	variants: {
+		light: { colors: LIGHT, nick: { saturation: 60, lightness: 36 }, panes: { messages: { dim: 0.3 } } }
+	}
+};
+
+describe('variants', () => {
+	it('reads only the variant for the other base', () => {
+		const t = readTheme({
+			base: 'dark',
+			variants: {
+				dark: { colors: { bg: '#000000' } },
+				light: { colors: { bg: '#F5F9F6', nope: '#000000', fg: 'red' }, nick: { lightness: 36 }, radius: 3 },
+				sepia: {}
+			}
+		});
+		expect(t?.variants).toEqual({ light: { colors: { bg: '#f5f9f6' }, nick: { lightness: 36 } } });
+		expect(
+			readTheme({ base: 'light', variants: { light: { colors: { bg: '#ffffff' } } } })?.variants
+		).toBeUndefined();
+		expect(readTheme({ variants: { light: {} } })?.variants).toEqual({ light: {} });
+	});
+	it('picks the variant for the scheme, panes overlaid', () => {
+		const light = themeFor(IRCF, 'light');
+		expect(light.base).toBe('light');
+		expect(light.colors).toEqual(LIGHT);
+		expect(light.nick).toEqual({ saturation: 60, lightness: 36 });
+		expect(light.panes).toEqual({ servers: { bg: '#090c0e' }, messages: { image: '/m.png', dim: 0.3 } });
+		expect(light.radius).toBe(4);
+		expect(light.logo).toBe('/logo.png');
+		expect(light.variants).toBeUndefined();
+		const dark = themeFor(IRCF, 'dark');
+		expect(dark.colors).toEqual(IRCF.colors);
+		expect(dark.variants).toBeUndefined();
+		// No variant: the primary in either mode.
+		const plain: BosonTheme = { ...IRCF };
+		delete plain.variants;
+		expect(themeFor(plain, 'light')).toEqual(plain);
+		// An empty variant is Boson's own light look.
+		expect(resolveColors(themeFor({ ...plain, variants: { light: {} } }, 'light')).bg).toBe('#f4f4f0');
+	});
+	it('runs the contrast guard on the chosen variant', () => {
+		// The dark rail colour carries over into light mode until the variant sets its own.
+		expect(contrastIssues(themeFor(IRCF, 'light')).map((i) => i.bg)).toEqual(['panes.servers.bg']);
+		const fixed = { ...IRCF, variants: { light: { colors: LIGHT, panes: { servers: { bg: '#e7efea' } } } } };
+		expect(contrastIssues(themeFor(fixed, 'light'))).toEqual([]);
+		const bad = themeFor({ ...IRCF, variants: { light: { colors: { ...LIGHT, fg: '#d0d0d0' } } } }, 'light');
+		expect(contrastIssues(bad).map((i) => i.fg)).toContain('fg');
+	});
+	it('paints listings with the variant matching the page', () => {
+		expect(listingStyle(IRCF, 'light')).toContain('--surface: #ffffff');
+		expect(listingStyle(IRCF, 'light')).toContain('color-scheme: light');
+		expect(listingAccent(IRCF, 'light')).toBe('#0d7a45');
+		expect(listingStyle(IRCF, 'dark')).toContain('--surface: #11161a');
+		expect(listingAccent(IRCF)).toBe('#70d199');
+	});
+	it('cleans variants but keeps an empty one', () => {
+		expect(
+			cleanTheme({ version: 1, base: 'dark', variants: { light: { colors: {}, panes: { servers: {} } } } })
+		).toEqual({ version: 1, base: 'dark', variants: { light: {} } });
+		expect(
+			cleanTheme({ version: 1, base: 'light', variants: { light: { colors: { bg: '#ffffff' } } } })
+		).toEqual({
+			version: 1,
+			base: 'light'
+		});
 	});
 });

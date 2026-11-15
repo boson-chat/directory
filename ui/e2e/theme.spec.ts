@@ -93,3 +93,109 @@ test('cards and pages use readable listing colours only', async ({ page }, info)
 	await shoot(page, info, 'theme-page');
 	ok();
 });
+
+test('owners add a light version; listings wear the one for the page scheme', async ({ page }, info) => {
+	const ok = strict(page);
+	await signIn(page, 'demo', '/me/net_demo_verified');
+	const editor = page.locator('.editor');
+	const mode = (m: 'Dark' | 'Light') => editor.getByRole('radio', { name: new RegExp('^' + m) });
+	const accent = editor.getByLabel('Accent colour', { exact: true });
+	await expect(mode('Dark')).toHaveAttribute('aria-checked', 'true');
+	await expect(accent).toHaveValue('#10b981');
+
+	// No light version yet: light mode shows the dark theme, with the offer.
+	await mode('Light').click();
+	await expect(editor.getByText('No light version yet.')).toBeVisible();
+	await expect(accent).toHaveCount(0);
+	await expect(editor.locator('.client .pane.messages')).toHaveCSS('--pane-bg', '#06100c');
+	await shoot(page, info, 'theme-variant-offer');
+
+	await editor.getByRole('button', { name: 'Also provide a light version' }).click();
+	// It starts from Boson's own light theme.
+	await expect(accent).toHaveValue('#b45309');
+	await expect(editor.getByLabel('Background colour', { exact: true })).toHaveValue('#f4f4f0');
+	await accent.fill('#0d7a45');
+	await editor.getByLabel('Background colour', { exact: true }).fill('#f5f9f6');
+	await editor.getByLabel('Text colour', { exact: true }).fill('#0f1a14');
+	await expect(editor.locator('.client .tile.active')).toHaveCSS('background-color', 'rgb(13, 122, 69)');
+	// The contrast guard follows the version being edited.
+	await editor.getByLabel('Text colour', { exact: true }).fill('#e0e0e0');
+	await expect(editor.locator('.warn')).toContainText('Text on the background');
+	await editor.getByLabel('Text colour', { exact: true }).fill('#0f1a14');
+	await expect(editor.locator('.warn')).toHaveCount(0);
+	await shoot(page, info, 'theme-variant-light');
+
+	// Switching back keeps the dark values, and the light ones survive the trip.
+	await mode('Dark').click();
+	await expect(accent).toHaveValue('#10b981');
+	await expect(editor.getByLabel('Background colour', { exact: true })).toHaveValue('#06100c');
+	await shoot(page, info, 'theme-variant-dark');
+	await mode('Light').click();
+	await expect(accent).toHaveValue('#0d7a45');
+
+	await page.getByRole('button', { name: 'Save theme' }).click();
+	await expect(page.getByText('Theme saved.')).toBeVisible();
+	const saved = await page.request.get('/v1/networks/net_demo_verified');
+	const th = (await saved.json()).network.theme;
+	expect(th.base).toBe('dark');
+	expect(th.colors.accent).toBe('#10b981');
+	expect(th.variants.light.colors).toEqual({ accent: '#0d7a45', bg: '#f5f9f6', fg: '#0f1a14' });
+
+	// The listing page picks the version for its colour scheme.
+	await page.goto('/n/net_demo_verified');
+	const net = page.locator('article.net');
+	await page.emulateMedia({ colorScheme: 'light' });
+	await expect(net).toHaveAttribute('style', /--accent: #0d7a45/);
+	await expect(net).toHaveAttribute('style', /--bg: #f5f9f6/);
+	await page.emulateMedia({ colorScheme: 'dark' });
+	await expect(net).toHaveAttribute('style', /--accent: #10b981/);
+
+	// Removing the light version is a draft change too.
+	await page.goto('/me/net_demo_verified');
+	await mode('Light').click();
+	await editor.getByRole('button', { name: 'Remove light version' }).click();
+	await expect(editor.getByText('No light version yet.')).toBeVisible();
+	await page.getByRole('button', { name: 'Save theme' }).click();
+	await expect(page.getByText('Theme saved.')).toBeVisible();
+	const after = (await (await page.request.get('/v1/networks/net_demo_verified')).json()).network.theme;
+	expect(after.variants).toBeUndefined();
+	expect(after.colors.accent).toBe('#10b981');
+	ok();
+});
+
+test('a fresh theme takes its base from the first mode picked', async ({ page }) => {
+	const ok = strict(page);
+	await signIn(page, 'demo', '/me/net_demo_verified');
+	await page.getByRole('button', { name: 'Remove theme' }).click();
+	await page.getByRole('dialog').getByRole('button', { name: 'Remove theme' }).click();
+	await expect(page.getByText('Theme removed.')).toBeVisible();
+	const editor = page.locator('.editor');
+	await editor.getByRole('radio', { name: /^Light/ }).click();
+	await expect(editor.getByText('No light version yet.')).toHaveCount(0);
+	await expect(editor.getByLabel('Accent colour', { exact: true })).toHaveValue('#b45309');
+	await editor.getByLabel('Accent colour', { exact: true }).fill('#0e7490');
+	await page.getByRole('button', { name: 'Save theme' }).click();
+	await expect(page.getByText('Theme saved.')).toBeVisible();
+	const th = (await (await page.request.get('/v1/networks/net_demo_verified')).json()).network.theme;
+	expect(th.base).toBe('light');
+	ok();
+});
+
+test('cards use the variant for the page scheme', async ({ page }, info) => {
+	const ok = strict(page);
+	const card = page.locator('article.card', {
+		has: page.getByRole('link', { name: 'Nordlys', exact: true })
+	});
+	await page.emulateMedia({ colorScheme: 'light' });
+	await page.goto('/');
+	await expect(card).toHaveAttribute('style', /--surface: #ffffff/);
+	await expect(card).toHaveAttribute('style', /--accent: #0d7a45/);
+	await page.emulateMedia({ colorScheme: 'dark' });
+	await expect(card).toHaveAttribute('style', /--surface: #11161a/);
+	await expect(card).toHaveAttribute('style', /--accent: #70d199/);
+	// The site's own picker wins over the device setting.
+	await page.evaluate(() => (document.documentElement.dataset.theme = 'light'));
+	await expect(card).toHaveAttribute('style', /--accent: #0d7a45/);
+	await shoot(page, info, 'theme-variant-cards');
+	ok();
+});

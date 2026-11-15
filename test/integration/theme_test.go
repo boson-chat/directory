@@ -195,3 +195,91 @@ func TestThemeAccountAndOperator(t *testing.T) {
 	}
 	e.expect(e.do("PUT", "/v1/networks/net_01THEMEIMPORTED0000000000/theme", op, map[string]any{}), 409)
 }
+
+func TestThemeVariants(t *testing.T) {
+	e := newEnv(t)
+	k := netkey("stack-admin-key-variants-00000000000")
+	id := e.registerVerified(k, "irc.variants.example", nil)
+	base := "/v1/networks/" + id
+
+	light := map[string]any{
+		"colors": map[string]any{
+			"bg": "#F5F9F6", "surface": "#ffffff", "surface-raised": "#ffffff", "surface-hover": "#e7efea",
+			"border": "#cfdcd4", "border-soft": "#e1eae4", "fg": "#0f1a14", "fg-2": "#2c3e34", "fg-3": "#46594e",
+			"muted": "#5a6c62", "meta": "#74857b", "accent": "#0d7a45", "accent-on": "#ffffff", "success": "#11733f",
+			"warn": "#8a5a00", "danger": "#b42318", "info": "#0b62a3", "nope": "#000000",
+		},
+		"nick":   map[string]any{"saturation": 60, "lightness": 36},
+		"panes":  map[string]any{"servers": map[string]any{"bg": "#e7efea", "dim": 0.4}},
+		"radius": 8, "extra": true,
+	}
+	doc := map[string]any{
+		"version": 1, "base": "dark",
+		"colors":   map[string]any{"accent": "#70d199", "bg": "#0c0f12"},
+		"nick":     map[string]any{"saturation": 58, "lightness": 68},
+		"panes":    map[string]any{"servers": map[string]any{"bg": "#090c0e"}},
+		"variants": map[string]any{"light": light, "dark": map[string]any{"colors": map[string]any{"bg": "#000000"}}, "sepia": map[string]any{}},
+	}
+	th := themeOf(t, e.expect(e.do("PUT", base+"/theme", k, doc), 200))
+	vs, _ := th["variants"].(map[string]any)
+	lv, _ := vs["light"].(map[string]any)
+	if len(vs) != 1 || lv == nil {
+		t.Fatalf("variants %v", th["variants"])
+	}
+	lc := lv["colors"].(map[string]any)
+	if len(lc) != 17 || lc["bg"] != "#f5f9f6" || lc["nope"] != nil || lv["radius"] != nil || lv["extra"] != nil {
+		t.Fatalf("light variant %v", lv)
+	}
+	if lv["nick"].(map[string]any)["lightness"] != float64(36) || lv["panes"].(map[string]any)["servers"].(map[string]any)["dim"] != 0.4 {
+		t.Fatalf("light variant %v", lv)
+	}
+	if th["colors"].(map[string]any)["accent"] != "#70d199" {
+		t.Fatalf("primary %v", th)
+	}
+
+	// Bad variant values are rejected like the primary's.
+	for name, bad := range map[string]any{
+		"colour": map[string]any{"variants": map[string]any{"light": map[string]any{"colors": map[string]any{"bg": "white"}}}},
+		"nick":   map[string]any{"variants": map[string]any{"light": map[string]any{"nick": map[string]any{"lightness": 120}}}},
+		"dim":    map[string]any{"variants": map[string]any{"light": map[string]any{"panes": map[string]any{"messages": map[string]any{"dim": 2}}}}},
+		"image":  map[string]any{"variants": map[string]any{"light": map[string]any{"panes": map[string]any{"messages": map[string]any{"image": "ftp://x/y.png"}}}}},
+	} {
+		if r := e.expect(e.do("PUT", base+"/theme", k, bad), 400).m(t); r["error"] != "invalid_theme" || !strings.Contains(r["message"].(string), "variants.light") {
+			t.Errorf("%s: %v", name, r)
+		}
+	}
+	// 16 KB counts the variant.
+	big := map[string]any{"variants": map[string]any{"light": map[string]any{"panes": map[string]any{"messages": map[string]any{
+		"image": "https://cdn.example/" + strings.Repeat("x", 17000)}}}}}
+	if r := e.do("PUT", base+"/theme", k, big); r.Status != 400 {
+		t.Fatalf("over 16 KB: %d", r.Status)
+	}
+	// A variant equal to the base is dropped; with base light the light one goes.
+	th = themeOf(t, e.expect(e.do("PUT", base+"/theme", k, map[string]any{"base": "light", "variants": map[string]any{"light": light}}), 200))
+	if th["variants"] != nil {
+		t.Fatalf("variant equal to base kept: %v", th)
+	}
+
+	// GET → PUT round trip is stable, and the feed carries the variant.
+	e.expect(e.do("PUT", base+"/theme", k, doc), 200)
+	got := themeOf(t, e.expect(e.do("GET", base, "", nil), 200))
+	again := themeOf(t, e.expect(e.do("PUT", base+"/theme", k, got), 200))
+	a, _ := json.Marshal(got)
+	b, _ := json.Marshal(again)
+	if string(a) != string(b) {
+		t.Fatalf("round trip\n%s\n%s", a, b)
+	}
+	var feed struct {
+		Changes []struct {
+			Network struct {
+				ID    string          `json:"id"`
+				Theme json.RawMessage `json:"theme"`
+			} `json:"network"`
+		} `json:"changes"`
+	}
+	e.expect(e.do("GET", "/v1/feed", "", nil), 200).json(t, &feed)
+	last := feed.Changes[len(feed.Changes)-1].Network
+	if last.ID != id || !strings.Contains(string(last.Theme), `"variants":{"light":{"colors":{"accent":"#0d7a45"`) {
+		t.Fatalf("feed theme %s", last.Theme)
+	}
+}

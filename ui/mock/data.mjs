@@ -238,6 +238,41 @@ const seedThemes = {
 		version: 1,
 		base: 'dark',
 		colors: { bg: '#3a3a3a', surface: '#404040', fg: '#5a5a5a', accent: '#22d3ee' }
+	},
+	// Dark with a light version: each page colour scheme gets its own.
+	3: {
+		version: 1,
+		base: 'dark',
+		colors: {
+			accent: '#70d199',
+			'accent-on': '#06140c',
+			bg: '#0c0f12',
+			surface: '#11161a',
+			'surface-raised': '#161d21',
+			'surface-hover': '#1c252a',
+			border: '#26312f',
+			'border-soft': '#1a2224',
+			fg: '#e6efe9',
+			'fg-2': '#b9c7bf'
+		},
+		nick: { saturation: 58, lightness: 68 },
+		variants: {
+			light: {
+				colors: {
+					bg: '#f5f9f6',
+					surface: '#ffffff',
+					'surface-raised': '#ffffff',
+					'surface-hover': '#e7efea',
+					border: '#cfdcd4',
+					'border-soft': '#e1eae4',
+					fg: '#0f1a14',
+					'fg-2': '#2c3e34',
+					accent: '#0d7a45',
+					'accent-on': '#ffffff'
+				},
+				nick: { saturation: 60, lightness: 36 }
+			}
+		}
 	}
 };
 
