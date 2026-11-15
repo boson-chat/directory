@@ -8,6 +8,8 @@
 //   - nick saturation/lightness 0–100, radius 0–12, font boson|system;
 //   - pane dim 0–1, blur 0–24 px, position center|top|bottom|left|right;
 //   - image URLs are https (http too when AllowHTTP, for dev);
+//   - variants: at most one, for the base that isn't Base (one equal to
+//     Base is dropped), with the same colour, nick and pane rules;
 //   - unknown keys are dropped;
 //   - the whole document is at most MaxBytes.
 //
@@ -114,6 +116,23 @@ func (p *Panes) pane(name string) **Pane {
 	return nil
 }
 
+// Variant is the theme for the base that isn't the document's: its own
+// colours (missing tokens come from Boson's built-in of that base), nick
+// colours and per-pane overrides laid over the primary panes (a pane's
+// image is the primary's unless the variant gives one). An empty variant
+// is meaningful: "Boson's own look for that base".
+type Variant struct {
+	Colors map[string]string `json:"colors,omitempty"`
+	Nick   *Nick             `json:"nick,omitempty"`
+	Panes  *Panes            `json:"panes,omitempty"`
+}
+
+// Variants holds at most one variant: the base that isn't Theme.Base.
+type Variants struct {
+	Dark  *Variant `json:"dark,omitempty"`
+	Light *Variant `json:"light,omitempty"`
+}
+
 // Theme is a boson-theme/1 document. Image fields are nil when unset.
 type Theme struct {
 	Version         int               `json:"version"`
@@ -126,6 +145,7 @@ type Theme struct {
 	Logo            *string           `json:"logo,omitempty"`
 	LogoWide        *string           `json:"logo_wide,omitempty"`
 	LoginBackground *string           `json:"login_background,omitempty"`
+	Variants        *Variants         `json:"variants,omitempty"`
 }
 
 // New is an empty dark theme.
@@ -212,32 +232,12 @@ func (t *Theme) Normalize(o Options) error {
 	default:
 		return invalid("theme base must be dark or light")
 	}
-	if len(t.Colors) > 0 {
-		out := make(map[string]string, len(t.Colors))
-		for k, v := range t.Colors {
-			if !isToken(k) {
-				continue
-			}
-			if !colorRe.MatchString(v) {
-				return invalid("theme colour %s must be #rrggbb", k)
-			}
-			out[k] = strings.ToLower(v)
-		}
-		t.Colors = out
+	var err error
+	if t.Colors, err = normalizeColors(t.Colors, ""); err != nil {
+		return err
 	}
-	if len(t.Colors) == 0 {
-		t.Colors = nil
-	}
-	if t.Nick != nil {
-		if err := rangeCheck(t.Nick.Saturation, 0, 100, "nick saturation"); err != nil {
-			return err
-		}
-		if err := rangeCheck(t.Nick.Lightness, 0, 100, "nick lightness"); err != nil {
-			return err
-		}
-		if t.Nick.Saturation == nil && t.Nick.Lightness == nil {
-			t.Nick = nil
-		}
+	if t.Nick, err = normalizeNick(t.Nick, ""); err != nil {
+		return err
 	}
 	if err := rangeCheck(t.Radius, 0, 12, "radius"); err != nil {
 		return err
@@ -245,38 +245,11 @@ func (t *Theme) Normalize(o Options) error {
 	if t.Font != "" && t.Font != "boson" && t.Font != "system" {
 		return invalid("theme font must be boson or system")
 	}
-	if t.Panes != nil {
-		for _, name := range PaneNames {
-			pp := t.Panes.pane(name)
-			p := *pp
-			if p == nil {
-				continue
-			}
-			if p.Bg != "" {
-				if !colorRe.MatchString(p.Bg) {
-					return invalid("panes.%s.bg must be #rrggbb", name)
-				}
-				p.Bg = strings.ToLower(p.Bg)
-			}
-			if err := rangeCheck(p.Dim, 0, 1, "panes."+name+".dim"); err != nil {
-				return err
-			}
-			if err := rangeCheck(p.Blur, 0, 24, "panes."+name+".blur"); err != nil {
-				return err
-			}
-			if p.Position != "" && !oneOf(p.Position, Positions) {
-				return invalid("panes.%s.position must be center, top, bottom, left or right", name)
-			}
-			if err := checkImage(&p.Image, "panes."+name+".image", o); err != nil {
-				return err
-			}
-			if p.empty() {
-				*pp = nil
-			}
-		}
-		if t.Panes.Servers == nil && t.Panes.Channels == nil && t.Panes.Messages == nil && t.Panes.Members == nil {
-			t.Panes = nil
-		}
+	if t.Panes, err = normalizePanes(t.Panes, "", o); err != nil {
+		return err
+	}
+	if err := t.normalizeVariants(o); err != nil {
+		return err
 	}
 	for _, f := range []struct {
 		v    **string
@@ -290,6 +263,134 @@ func (t *Theme) Normalize(o Options) error {
 		return invalid("the theme is too large (16 KB at most)")
 	}
 	return nil
+}
+
+// normalizeVariants keeps the variant for the base that isn't t.Base (the
+// one equal to it is dropped) and validates it like the primary.
+func (t *Theme) normalizeVariants(o Options) error {
+	if t.Variants == nil {
+		return nil
+	}
+	if t.Base == "dark" {
+		t.Variants.Dark = nil
+	} else {
+		t.Variants.Light = nil
+	}
+	for _, v := range []struct {
+		p    **Variant
+		name string
+	}{{&t.Variants.Dark, "dark"}, {&t.Variants.Light, "light"}} {
+		vr := *v.p
+		if vr == nil {
+			continue
+		}
+		prefix := "variants." + v.name + "."
+		var err error
+		if vr.Colors, err = normalizeColors(vr.Colors, prefix); err != nil {
+			return err
+		}
+		if vr.Nick, err = normalizeNick(vr.Nick, prefix); err != nil {
+			return err
+		}
+		if vr.Panes, err = normalizePanes(vr.Panes, prefix, o); err != nil {
+			return err
+		}
+	}
+	if t.Variants.Dark == nil && t.Variants.Light == nil {
+		t.Variants = nil
+	}
+	return nil
+}
+
+// Variant returns the variant for base, or nil (also for t.Base itself).
+func (t *Theme) Variant(base string) *Variant {
+	if t.Variants == nil || base == t.Base {
+		return nil
+	}
+	switch base {
+	case "dark":
+		return t.Variants.Dark
+	case "light":
+		return t.Variants.Light
+	}
+	return nil
+}
+
+// normalizeColors drops non-token keys and lowercases; nil when empty.
+func normalizeColors(in map[string]string, prefix string) (map[string]string, error) {
+	if len(in) == 0 {
+		return nil, nil
+	}
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		if !isToken(k) {
+			continue
+		}
+		if !colorRe.MatchString(v) {
+			return nil, invalid("theme %scolour %s must be #rrggbb", prefix, k)
+		}
+		out[k] = strings.ToLower(v)
+	}
+	if len(out) == 0 {
+		return nil, nil
+	}
+	return out, nil
+}
+
+func normalizeNick(n *Nick, prefix string) (*Nick, error) {
+	if n == nil {
+		return nil, nil
+	}
+	if err := rangeCheck(n.Saturation, 0, 100, prefix+"nick saturation"); err != nil {
+		return nil, err
+	}
+	if err := rangeCheck(n.Lightness, 0, 100, prefix+"nick lightness"); err != nil {
+		return nil, err
+	}
+	if n.Saturation == nil && n.Lightness == nil {
+		return nil, nil
+	}
+	return n, nil
+}
+
+// normalizePanes validates each pane and drops empty ones; nil when none.
+func normalizePanes(ps *Panes, prefix string, o Options) (*Panes, error) {
+	if ps == nil {
+		return nil, nil
+	}
+	for _, name := range PaneNames {
+		pp := ps.pane(name)
+		p := *pp
+		if p == nil {
+			continue
+		}
+		field := prefix + "panes." + name
+		if p.Bg != "" {
+			if !colorRe.MatchString(p.Bg) {
+				return nil, invalid("%s.bg must be #rrggbb", field)
+			}
+			p.Bg = strings.ToLower(p.Bg)
+		}
+		if err := rangeCheck(p.Dim, 0, 1, field+".dim"); err != nil {
+			return nil, err
+		}
+		if err := rangeCheck(p.Blur, 0, 24, field+".blur"); err != nil {
+			return nil, err
+		}
+		if p.Position != "" && !oneOf(p.Position, Positions) {
+			return nil, invalid("%s.position must be center, top, bottom, left or right", field)
+		}
+		if err := checkImage(&p.Image, field+".image", o); err != nil {
+			return nil, err
+		}
+		if p.empty() {
+			*pp = nil
+		}
+	}
+	if ps.Servers == nil && ps.Channels == nil && ps.Messages == nil && ps.Members == nil {
+		return nil, nil
+	}
+	return ps, nil
 }
 
 func rangeCheck(v *float64, lo, hi float64, name string) error {
@@ -459,6 +560,19 @@ func (t *Theme) Render(urlFor func(string) string) *Theme {
 	c := t.Clone()
 	for slot, v := range c.Values() {
 		c.Set(slot, urlFor(v))
+	}
+	if c.Variants != nil {
+		for _, vr := range []*Variant{c.Variants.Dark, c.Variants.Light} {
+			if vr == nil || vr.Panes == nil {
+				continue
+			}
+			for _, name := range PaneNames {
+				if p := *vr.Panes.pane(name); p != nil && p.Image != nil {
+					u := urlFor(*p.Image)
+					p.Image = &u
+				}
+			}
+		}
 	}
 	return c
 }

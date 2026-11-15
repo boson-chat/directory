@@ -151,3 +151,133 @@ func TestSlotsAndRender(t *testing.T) {
 		t.Fatal("empty theme must render null")
 	}
 }
+
+// IRC Forever's light palette, as the second variant of its dark theme.
+const lightVariant = `{
+	"colors": {"bg": "#F5F9F6", "surface": "#ffffff", "surface-raised": "#ffffff", "surface-hover": "#e7efea",
+		"border": "#cfdcd4", "border-soft": "#e1eae4", "fg": "#0f1a14", "fg-2": "#2c3e34", "fg-3": "#46594e",
+		"muted": "#5a6c62", "meta": "#74857b", "accent": "#0d7a45", "accent-on": "#ffffff", "success": "#11733f",
+		"warn": "#8a5a00", "danger": "#b42318", "info": "#0b62a3", "glow": "#ffffff"},
+	"nick": {"saturation": 60, "lightness": 36},
+	"panes": {"servers": {"bg": "#E7EFEA", "dim": 0.4, "x": 1}, "members": {}},
+	"radius": 9, "logo": "https://cdn.example/dropped.png"
+}`
+
+func TestVariants(t *testing.T) {
+	raw := `{"base": "dark", "colors": {"accent": "#70d199"}, "panes": {"servers": {"bg": "#090c0e"}},
+		"variants": {"light": ` + lightVariant + `, "sepia": {"colors": {"bg": "#000000"}}}}`
+	th, err := Parse([]byte(raw), Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	v := th.Variant("light")
+	if v == nil || th.Variants.Dark != nil || th.Variant("dark") != nil {
+		t.Fatalf("variants %+v", th.Variants)
+	}
+	if len(v.Colors) != 17 || v.Colors["bg"] != "#f5f9f6" || v.Colors["glow"] != "" {
+		t.Fatalf("variant colours %v", v.Colors)
+	}
+	if *v.Nick.Saturation != 60 || *v.Nick.Lightness != 36 {
+		t.Fatalf("variant nick %+v", v.Nick)
+	}
+	if v.Panes.Servers.Bg != "#e7efea" || *v.Panes.Servers.Dim != 0.4 || v.Panes.Members != nil {
+		t.Fatalf("variant panes %+v", v.Panes)
+	}
+	enc := string(th.Encode())
+	for _, gone := range []string{"sepia", "glow", "radius", "dropped.png", `"x"`, "members"} {
+		if strings.Contains(enc, gone) {
+			t.Errorf("%s kept: %s", gone, enc)
+		}
+	}
+	// Shared fields stay top-level; the primary is untouched.
+	if th.Colors["accent"] != "#70d199" || th.Panes.Servers.Bg != "#090c0e" || th.Radius != nil {
+		t.Fatalf("primary %s", enc)
+	}
+	again, err := Parse(th.Encode(), Options{})
+	if err != nil || string(again.Encode()) != enc {
+		t.Fatalf("round trip: %v\n%s\n%s", err, again.Encode(), enc)
+	}
+}
+
+func TestVariantEqualToBaseDropped(t *testing.T) {
+	th, err := Parse([]byte(`{"base": "light", "variants": {"light": {"colors": {"bg": "#ffffff"}}}}`), Options{})
+	if err != nil || th.Variants != nil {
+		t.Fatalf("%s %v", th.Encode(), err)
+	}
+	if string(th.Encode()) != `{"version":1,"base":"light"}` {
+		t.Fatal(string(th.Encode()))
+	}
+	// The default base is dark, so a dark variant without base is dropped too.
+	th, err = Parse([]byte(`{"variants": {"dark": {}, "light": {}}}`), Options{})
+	if err != nil || string(th.Encode()) != `{"version":1,"base":"dark","variants":{"light":{}}}` {
+		t.Fatalf("%s %v", th.Encode(), err)
+	}
+	// Even an invalid variant equal to base is dropped, not rejected.
+	if _, err := Parse([]byte(`{"base": "dark", "variants": {"dark": {"colors": {"bg": "red"}}}}`), Options{}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestVariantEmptyIsKept(t *testing.T) {
+	// {} means "Boson's own light look", which differs from no variant.
+	th, err := Parse([]byte(`{"variants": {"light": {"colors": {"nope": "#000000"}, "panes": {"messages": {}}}}}`), Options{})
+	if err != nil || string(th.Encode()) != `{"version":1,"base":"dark","variants":{"light":{}}}` {
+		t.Fatalf("%s %v", th.Encode(), err)
+	}
+	th, err = Parse([]byte(`{"variants": {}}`), Options{})
+	if err != nil || th.Variants != nil {
+		t.Fatalf("%s %v", th.Encode(), err)
+	}
+}
+
+func TestVariantRejects(t *testing.T) {
+	bad := map[string]string{
+		"short colour": `{"variants": {"light": {"colors": {"accent": "#fff"}}}}`,
+		"named colour": `{"variants": {"light": {"colors": {"bg": "white"}}}}`,
+		"colour type":  `{"variants": {"light": {"colors": {"bg": 5}}}}`,
+		"saturation":   `{"variants": {"light": {"nick": {"saturation": 101}}}}`,
+		"lightness":    `{"variants": {"light": {"nick": {"lightness": -1}}}}`,
+		"pane bg":      `{"variants": {"light": {"panes": {"channels": {"bg": "blue"}}}}}`,
+		"dim":          `{"variants": {"light": {"panes": {"channels": {"dim": 1.5}}}}}`,
+		"blur":         `{"variants": {"light": {"panes": {"channels": {"blur": 25}}}}}`,
+		"position":     `{"variants": {"light": {"panes": {"channels": {"position": "middle"}}}}}`,
+		"pane image":   `{"variants": {"light": {"panes": {"messages": {"image": "http://cdn.example/x.png"}}}}}`,
+		"not object":   `{"variants": {"light": [1]}}`,
+		"variants":     `{"variants": "light"}`,
+		"dark variant": `{"base": "light", "variants": {"dark": {"colors": {"fg": "#12345"}}}}`,
+		"too large": `{"variants": {"light": {"panes": {"messages": {"image": "https://cdn.example/` +
+			strings.Repeat("a", 2000) + `"}}}}, "logo": "https://cdn.example/` + strings.Repeat("b", MaxBytes-2100) + `"}`,
+	}
+	for name, raw := range bad {
+		_, err := Parse([]byte(raw), Options{})
+		if err == nil || !IsInvalid(err) {
+			t.Errorf("%s: accepted (%v)", name, err)
+		}
+		if name != "too large" && name != "not object" && name != "variants" && err != nil && !strings.Contains(err.Error(), "variants.") && !strings.Contains(err.Error(), "wrong type") {
+			t.Errorf("%s: error doesn't name the variant: %v", name, err)
+		}
+	}
+}
+
+func TestVariantImages(t *testing.T) {
+	th, err := Parse([]byte(`{"panes": {"messages": {"image": "https://cdn.example/dark.webp"}},
+		"variants": {"light": {"panes": {"messages": {"image": "https://cdn.example/light.webp", "dim": 0.3}}}}}`), Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Image slots are the primary's; the variant's image is its own URL.
+	if th.Get(SlotPaneMessages) != "https://cdn.example/dark.webp" || len(th.Values()) != 1 {
+		t.Fatalf("%v", th.Values())
+	}
+	r := th.Render(func(k string) string { return "https://m.example/" + k })
+	if got := *r.Variant("light").Panes.Messages.Image; got != "https://m.example/https://cdn.example/light.webp" {
+		t.Fatalf("render %s", got)
+	}
+	if *th.Variant("light").Panes.Messages.Image != "https://cdn.example/light.webp" {
+		t.Fatal("render must copy")
+	}
+	th.Set(SlotPaneMessages, "")
+	if th.Variant("light").Panes.Messages.Image == nil {
+		t.Fatal("clearing the primary slot must not touch the variant")
+	}
+}

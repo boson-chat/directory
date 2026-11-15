@@ -104,7 +104,7 @@ func TestImportedNetworkValidation(t *testing.T) {
 
 func TestFeedCarriesTheme(t *testing.T) {
 	now := time.Now()
-	stored := `{"version":1,"base":"dark","colors":{"accent":"#7c3aed"},"panes":{"messages":{"image":"network-themes/net_1-pane-messages-ab.webp","dim":0.6}},"logo":"network-themes/net_1-logo-cd.svg","login_background":"https://cdn.example/bg.jpg"}`
+	stored := `{"version":1,"base":"dark","colors":{"accent":"#7c3aed"},"panes":{"messages":{"image":"network-themes/net_1-pane-messages-ab.webp","dim":0.6}},"logo":"network-themes/net_1-logo-cd.svg","login_background":"https://cdn.example/bg.jpg","variants":{"light":{"colors":{"bg":"#f5f9f6","accent":"#0d7a45"},"nick":{"lightness":36},"panes":{"servers":{"bg":"#e7efea","dim":0.4}}}}}`
 	changes := []network.Change{
 		{Seq: 3, Network: &network.Network{ID: "net_1", Hostname: "irc.a.test", Port: 6697, Name: "A",
 			Origin: network.OriginLocal, Status: network.StatusVerified, VerificationToken: "tok-aaaaaaaa",
@@ -120,7 +120,8 @@ func TestFeedCarriesTheme(t *testing.T) {
 	})
 	got := string(page.Changes[0].Network.Theme)
 	for _, want := range []string{`"logo":"https://dir.test/media/network-themes/net_1-logo-cd.svg"`,
-		`"image":"https://dir.test/media/network-themes/net_1-pane-messages-ab.webp"`, `"login_background":"https://cdn.example/bg.jpg"`, `"accent":"#7c3aed"`} {
+		`"image":"https://dir.test/media/network-themes/net_1-pane-messages-ab.webp"`, `"login_background":"https://cdn.example/bg.jpg"`, `"accent":"#7c3aed"`,
+		`"variants":{"light":{"colors":{"accent":"#0d7a45","bg":"#f5f9f6"},"nick":{"lightness":36},"panes":{"servers":{"bg":"#e7efea","dim":0.4}}}}`} {
 		if !strings.Contains(got, want) {
 			t.Errorf("feed theme lacks %s: %s", want, got)
 		}
@@ -137,11 +138,13 @@ func TestFeedCarriesTheme(t *testing.T) {
 	c := validChange()
 	c.Network.Theme = page.Changes[0].Network.Theme
 	th, err := importedTheme(c.Network.Theme, true)
-	if err != nil || !strings.Contains(string(th), "https://dir.test/media/network-themes/net_1-logo-cd.svg") {
+	if err != nil || !strings.Contains(string(th), "https://dir.test/media/network-themes/net_1-logo-cd.svg") ||
+		!strings.Contains(string(th), `"variants":{"light":{"colors":{"accent":"#0d7a45"`) {
 		t.Fatalf("%s %v", th, err)
 	}
 	// Keys (not URLs), bad colours, http in production: rejected.
-	for _, bad := range []string{`{"logo":"network-themes/x.png"}`, `{"colors":{"bg":"red"}}`, `{"logo":"http://dir-a:8080/media/x.png"}`} {
+	for _, bad := range []string{`{"logo":"network-themes/x.png"}`, `{"colors":{"bg":"red"}}`, `{"logo":"http://dir-a:8080/media/x.png"}`,
+		`{"variants":{"light":{"colors":{"bg":"red"}}}}`} {
 		if _, err := importedTheme(json.RawMessage(bad), true); err == nil {
 			t.Errorf("%s accepted", bad)
 		}

@@ -5,6 +5,7 @@
 	import {
 		cleanTheme,
 		contrastIssues,
+		otherBase,
 		MAX_BLUR,
 		MAX_RADIUS,
 		PANES,
@@ -14,7 +15,10 @@
 		resolveColors,
 		resolveNick,
 		THEME_TOKENS,
+		themeFor,
 		type BosonTheme,
+		type ThemeBase,
+		type ThemeVariant,
 		type ImageSlot,
 		type PaneName,
 		type PanePosition,
@@ -30,6 +34,11 @@
 	/**
 	 * The listing's boson-theme/1 editor. Colours, panes and type are a draft
 	 * until "Save theme"; images upload at once (each is its own slot).
+	 *
+	 * Dark | Light picks the version being edited. The theme's `base` is the
+	 * primary version; the other one, when provided, is `variants.<other>`:
+	 * its own colours, nick colours and pane overrides (images, radius and
+	 * font are shared).
 	 */
 	let { listing = $bindable() }: { listing: Listing } = $props();
 
@@ -39,11 +48,22 @@
 	// The draft starts from what the server has; edits stay local until saved.
 	let draft = $state<BosonTheme>(copy(readTheme(listing.network.theme) ?? fresh()));
 	let busy = $state(false);
+	// The version being edited; the primary (base) first.
+	let editing = $state<ThemeBase>(readTheme(listing.network.theme)?.base ?? 'dark');
 
-	let colors = $derived(resolveColors(draft));
-	let nick = $derived(resolveNick(draft));
-	let issues = $derived(contrastIssues(draft));
-	let dirty = $derived(JSON.stringify(cleanTheme(draft)) !== JSON.stringify(cleanTheme(saved ?? fresh())));
+	let primary = $derived(editing === draft.base);
+	let other = $derived(otherBase(draft.base));
+	let hasOther = $derived(!!draft.variants?.[other]);
+	// Editable: the primary, or the other version once it exists.
+	let editable = $derived(primary || hasOther);
+	// What people in `editing` mode see: the variant merged over the primary.
+	let view = $derived(themeFor(draft, editing));
+	let colors = $derived(resolveColors(view));
+	let nick = $derived(resolveNick(view));
+	let issues = $derived(contrastIssues(view));
+	const canon = (t: BosonTheme) => JSON.stringify(readTheme(cleanTheme(t)));
+	let dirty = $derived(canon(draft) !== canon(saved ?? fresh()));
+	const modeName = (b: ThemeBase) => (b === 'dark' ? 'dark' : 'light');
 	const groups = [...new Set(THEME_TOKENS.map((t) => t.group))];
 	const positions: DropdownOption<PanePosition>[] = POSITIONS.map((p) => ({
 		value: p,
@@ -56,28 +76,66 @@
 		members: 'Member list'
 	};
 
+	/** Where edits to colours, nick and panes go: the primary or the variant. */
+	function look(): ThemeVariant {
+		if (primary) return draft;
+		draft.variants ??= {};
+		return (draft.variants[editing] ??= {});
+	}
+	/** The edited version's own settings (not inherited ones). */
+	let own = $derived<ThemeVariant>((primary ? draft : draft.variants?.[editing]) ?? {});
+
+	function pick(b: ThemeBase) {
+		editing = b;
+		// A theme with nothing in it yet: the first pick is its base.
+		const empty = !Object.keys(cleanTheme(draft)).some((k) => !['version', 'base'].includes(k));
+		if (empty) draft.base = b;
+	}
+	function addVariant() {
+		// Starts from Boson's own look for that base (no colours of its own).
+		draft.variants = { [editing]: {} };
+	}
+	function removeVariant() {
+		delete draft.variants;
+	}
+	function makePrimary() {
+		// Only offered without a variant: the colours move with it.
+		draft.base = editing;
+	}
+
 	function setColor(key: ThemeToken, value: string) {
-		draft.colors = { ...(draft.colors ?? {}), [key]: value.toLowerCase() };
+		const l = look();
+		l.colors = { ...(l.colors ?? {}), [key]: value.toLowerCase() };
 	}
 	function clearColor(key: ThemeToken) {
-		if (!draft.colors) return;
-		const next = { ...draft.colors };
+		const l = look();
+		if (!l.colors) return;
+		const next = { ...l.colors };
 		delete next[key];
-		draft.colors = next;
+		l.colors = next;
 	}
-	function pane(name: PaneName) {
-		draft.panes ??= {};
-		draft.panes[name] ??= {};
-		return draft.panes[name]!;
+	function setNick(key: 'saturation' | 'lightness', value: number) {
+		const l = look();
+		l.nick = { ...l.nick, [key]: value };
 	}
-	function setPane<K extends keyof ThemePane>(name: PaneName, key: K, value: ThemePane[K] | undefined) {
-		const p = pane(name);
+	function pane(l: ThemeVariant, name: PaneName) {
+		l.panes ??= {};
+		l.panes[name] ??= {};
+		return l.panes[name]!;
+	}
+	function setPane<K extends keyof ThemePane>(
+		name: PaneName,
+		key: K,
+		value: ThemePane[K] | undefined,
+		l: ThemeVariant = look()
+	) {
+		const p = pane(l, name);
 		if (value === undefined) delete p[key];
 		else p[key] = value;
 	}
-	/** An uploaded image is live at once: mirror it into the draft. */
+	/** An uploaded image is live at once: mirror it into the draft (images are the primary's). */
 	function imageChanged(slot: ImageSlot, url: string | undefined) {
-		if (slot.startsWith('pane-')) setPane(slot.slice(5) as PaneName, 'image', url);
+		if (slot.startsWith('pane-')) setPane(slot.slice(5) as PaneName, 'image', url, draft);
 		else if (url) draft[slot as 'logo'] = url;
 		else delete draft[slot as 'logo'];
 	}
@@ -101,6 +159,7 @@
 		try {
 			listing = await directory.deleteTheme(listing.network.id);
 			draft = fresh();
+			editing = 'dark';
 			toasts.push('Theme removed.');
 		} catch (e) {
 			toasts.push(errorText(e), 'bad');
@@ -113,63 +172,105 @@
 <div class="editor">
 	<div class="controls">
 		<fieldset>
-			<legend>Base</legend>
-			<p class="hint">Colours you don’t set come from Boson’s own {draft.base} theme.</p>
-			<div class="seg" role="radiogroup" aria-label="Base theme">
+			<legend>Mode</legend>
+			<div class="seg" role="radiogroup" aria-label="Version to edit">
 				{#each ['dark', 'light'] as const as b (b)}
 					<button
 						type="button"
 						role="radio"
-						aria-checked={draft.base === b}
-						class:on={draft.base === b}
-						onclick={() => (draft.base = b)}>{b === 'dark' ? 'Dark' : 'Light'}</button
+						aria-checked={editing === b}
+						class:on={editing === b}
+						onclick={() => pick(b)}
+						>{b === 'dark' ? 'Dark' : 'Light'}{#if b === draft.base && (hasOther || editing !== b)}<span
+								class="tag">primary</span
+							>{:else if b !== draft.base && hasOther}<span class="tag">added</span>{/if}</button
 					>
 				{/each}
 			</div>
+			{#if primary}
+				<p class="hint">
+					Colours you don’t set come from Boson’s own {modeName(draft.base)} theme.
+					{#if !hasOther}People in {modeName(other)} mode see this version too.{/if}
+				</p>
+			{:else if hasOther}
+				<div class="variant-bar">
+					<p class="hint">
+						The {modeName(editing)} version, for people in {modeName(editing)} mode. Colours you don’t set come
+						from Boson’s own {modeName(editing)} theme; images, font and corners are shared with the
+						{modeName(draft.base)} version.
+					</p>
+					<button class="btn btn-ghost btn-small rm" type="button" onclick={removeVariant}
+						>Remove {modeName(editing)} version</button
+					>
+				</div>
+			{:else}
+				<div class="novariant">
+					<p>
+						<strong>No {modeName(editing)} version yet.</strong>
+						People in {modeName(editing)} mode see your {modeName(draft.base)} theme.
+					</p>
+					<div class="acts">
+						<button class="btn btn-primary" type="button" onclick={addVariant}
+							>Also provide a {modeName(editing)} version</button
+						>
+						<button class="btn btn-ghost" type="button" onclick={makePrimary}
+							>Make it a {modeName(editing)} theme instead</button
+						>
+					</div>
+					<p class="hint">
+						The {modeName(editing)} version starts from Boson’s own {modeName(editing)} theme. Your
+						{modeName(draft.base)} colours stay as they are.
+					</p>
+				</div>
+			{/if}
 		</fieldset>
 
-		{#each groups as g (g)}
-			<fieldset>
-				<legend>{g}</legend>
-				<div class="swatches">
-					{#each THEME_TOKENS.filter((t) => t.group === g) as tok (tok.key)}
-						{@const own = draft.colors?.[tok.key]}
-						<div class="sw" class:own>
-							<label>
-								<input
-									type="color"
-									value={colors[tok.key]}
-									oninput={(e) => setColor(tok.key, e.currentTarget.value)}
-									aria-label="{tok.label} colour"
-								/>
-								<span class="nm">{tok.label}</span>
-								<span class="hex">{colors[tok.key]}</span>
-							</label>
-							{#if own}
-								<button
-									type="button"
-									class="clear"
-									title="Use the base colour"
-									aria-label="Reset {tok.label} to the base colour"
-									onclick={() => clearColor(tok.key)}>×</button
-								>
-							{/if}
-						</div>
-					{/each}
-				</div>
-			</fieldset>
-		{/each}
+		{#if editable}
+			{#each groups as g (g)}
+				<fieldset>
+					<legend>{g}</legend>
+					<div class="swatches">
+						{#each THEME_TOKENS.filter((t) => t.group === g) as tok (tok.key)}
+							{@const mine = own.colors?.[tok.key]}
+							<div class="sw" class:own={mine}>
+								<label>
+									<input
+										type="color"
+										value={colors[tok.key]}
+										oninput={(e) => setColor(tok.key, e.currentTarget.value)}
+										aria-label="{tok.label} colour"
+									/>
+									<span class="nm">{tok.label}</span>
+									<span class="hex">{colors[tok.key]}</span>
+								</label>
+								{#if mine}
+									<button
+										type="button"
+										class="clear"
+										title="Use the base colour"
+										aria-label="Reset {tok.label} to the base colour"
+										onclick={() => clearColor(tok.key)}>×</button
+									>
+								{/if}
+							</div>
+						{/each}
+					</div>
+				</fieldset>
+			{/each}
 
-		{#if issues.length}
-			<div class="warn" role="status">
-				<strong>Low contrast</strong>
-				<ul>
-					{#each issues as i (i.label)}
-						<li>{i.label}: {ratio(i.ratio)} (needs 4.5:1)</li>
-					{/each}
-				</ul>
-				<p>Clients and this directory won’t use text colours that don’t read: they keep their own instead.</p>
-			</div>
+			{#if issues.length}
+				<div class="warn" role="status">
+					<strong>Low contrast</strong>
+					<ul>
+						{#each issues as i (i.label)}
+							<li>{i.label}: {ratio(i.ratio)} (needs 4.5:1)</li>
+						{/each}
+					</ul>
+					<p>
+						Clients and this directory won’t use text colours that don’t read: they keep their own instead.
+					</p>
+				</div>
+			{/if}
 		{/if}
 
 		<fieldset>
@@ -200,28 +301,30 @@
 				/>
 				<output>{draft.radius ?? 2} px</output>
 			</label>
-			<label class="row">
-				<span class="rl">Nick saturation</span>
-				<input
-					type="range"
-					min="0"
-					max="100"
-					value={nick.saturation}
-					oninput={(e) => (draft.nick = { ...draft.nick, saturation: Number(e.currentTarget.value) })}
-				/>
-				<output>{nick.saturation}%</output>
-			</label>
-			<label class="row">
-				<span class="rl">Nick lightness</span>
-				<input
-					type="range"
-					min="0"
-					max="100"
-					value={nick.lightness}
-					oninput={(e) => (draft.nick = { ...draft.nick, lightness: Number(e.currentTarget.value) })}
-				/>
-				<output>{nick.lightness}%</output>
-			</label>
+			{#if editable}
+				<label class="row">
+					<span class="rl">Nick saturation</span>
+					<input
+						type="range"
+						min="0"
+						max="100"
+						value={nick.saturation}
+						oninput={(e) => setNick('saturation', Number(e.currentTarget.value))}
+					/>
+					<output>{nick.saturation}%</output>
+				</label>
+				<label class="row">
+					<span class="rl">Nick lightness</span>
+					<input
+						type="range"
+						min="0"
+						max="100"
+						value={nick.lightness}
+						oninput={(e) => setNick('lightness', Number(e.currentTarget.value))}
+					/>
+					<output>{nick.lightness}%</output>
+				</label>
+			{/if}
 		</fieldset>
 
 		<fieldset>
@@ -252,84 +355,99 @@
 			<p class="hint">PNG, JPEG, WebP, GIF or SVG; up to 2 MB and 4096 px a side.</p>
 		</fieldset>
 
-		<fieldset>
-			<legend>Panes</legend>
-			{#each PANES as p (p)}
-				{@const pd = draft.panes?.[p]}
-				<div class="pane">
-					<div class="ph">
-						<strong>{paneLabels[p]}</strong>
-						<label class="pbg">
-							<input
-								type="color"
-								value={pd?.bg ?? paneDefault(p, colors)}
-								oninput={(e) => setPane(p, 'bg', e.currentTarget.value.toLowerCase())}
-								aria-label="{paneLabels[p]} background colour"
-							/>
-							<span class="hex">{pd?.bg ?? 'default'}</span>
-						</label>
-						{#if pd?.bg}
-							<button
-								type="button"
-								class="clear"
-								aria-label="Reset the {paneLabels[p].toLowerCase()} background"
-								onclick={() => setPane(p, 'bg', undefined)}>×</button
-							>
+		{#if editable}
+			<fieldset>
+				<legend>Panes</legend>
+				{#if !primary}
+					<p class="hint">
+						Pane images are shared. Colour, dim, blur and position set here apply in {modeName(editing)} mode; the
+						rest come from the {modeName(draft.base)} version.
+					</p>
+				{/if}
+				{#each PANES as p (p)}
+					{@const pd = view.panes?.[p]}
+					{@const ownBg = own.panes?.[p]?.bg}
+					<div class="pane">
+						<div class="ph">
+							<strong>{paneLabels[p]}</strong>
+							<label class="pbg">
+								<input
+									type="color"
+									value={pd?.bg ?? paneDefault(p, colors)}
+									oninput={(e) => setPane(p, 'bg', e.currentTarget.value.toLowerCase())}
+									aria-label="{paneLabels[p]} background colour"
+								/>
+								<span class="hex"
+									>{pd?.bg ?? 'default'}{#if pd?.bg && !ownBg}
+										· from {modeName(draft.base)}{/if}</span
+								>
+							</label>
+							{#if ownBg}
+								<button
+									type="button"
+									class="clear"
+									aria-label="Reset the {paneLabels[p].toLowerCase()} background"
+									onclick={() => setPane(p, 'bg', undefined)}>×</button
+								>
+							{/if}
+						</div>
+						<ThemeImage
+							bind:listing
+							slot="pane-{p}"
+							label="{paneLabels[p]} image"
+							hint="Drawn under a dim layer of the pane colour."
+							onchange={(u) => imageChanged(`pane-${p}`, u)}
+						/>
+						{#if pd?.image}
+							<div class="pimg">
+								<label class="row">
+									<span class="rl">Dim</span>
+									<input
+										type="range"
+										min="0"
+										max="1"
+										step="0.05"
+										value={pd.dim ?? 0.6}
+										oninput={(e) => setPane(p, 'dim', Number(e.currentTarget.value))}
+									/>
+									<output>{Math.round((pd.dim ?? 0.6) * 100)}%</output>
+								</label>
+								<label class="row">
+									<span class="rl">Blur</span>
+									<input
+										type="range"
+										min="0"
+										max={MAX_BLUR}
+										step="1"
+										value={pd.blur ?? 0}
+										oninput={(e) => setPane(p, 'blur', Number(e.currentTarget.value))}
+									/>
+									<output>{pd.blur ?? 0} px</output>
+								</label>
+								<div class="row">
+									<span class="rl" id="pos-{p}">Position</span>
+									<Dropdown
+										options={positions}
+										value={pd.position ?? 'center'}
+										onchange={(v: PanePosition) => setPane(p, 'position', v)}
+										labelledby="pos-{p}"
+										size="small"
+									/>
+								</div>
+							</div>
 						{/if}
 					</div>
-					<ThemeImage
-						bind:listing
-						slot="pane-{p}"
-						label="{paneLabels[p]} image"
-						hint="Drawn under a dim layer of the pane colour."
-						onchange={(u) => imageChanged(`pane-${p}`, u)}
-					/>
-					{#if pd?.image}
-						<div class="pimg">
-							<label class="row">
-								<span class="rl">Dim</span>
-								<input
-									type="range"
-									min="0"
-									max="1"
-									step="0.05"
-									value={pd.dim ?? 0.6}
-									oninput={(e) => setPane(p, 'dim', Number(e.currentTarget.value))}
-								/>
-								<output>{Math.round((pd.dim ?? 0.6) * 100)}%</output>
-							</label>
-							<label class="row">
-								<span class="rl">Blur</span>
-								<input
-									type="range"
-									min="0"
-									max={MAX_BLUR}
-									step="1"
-									value={pd.blur ?? 0}
-									oninput={(e) => setPane(p, 'blur', Number(e.currentTarget.value))}
-								/>
-								<output>{pd.blur ?? 0} px</output>
-							</label>
-							<div class="row">
-								<span class="rl" id="pos-{p}">Position</span>
-								<Dropdown
-									options={positions}
-									value={pd.position ?? 'center'}
-									onchange={(v: PanePosition) => setPane(p, 'position', v)}
-									labelledby="pos-{p}"
-									size="small"
-								/>
-							</div>
-						</div>
-					{/if}
-				</div>
-			{/each}
-		</fieldset>
+				{/each}
+			</fieldset>
+		{/if}
 	</div>
 
 	<aside class="side">
 		<div class="sticky">
-			<ThemePreview theme={draft} name={listing.network.name} />
+			<ThemePreview theme={view} name={listing.network.name} />
+			{#if !editable}
+				<p class="hint">How people in {modeName(editing)} mode see it now.</p>
+			{/if}
 			<div class="acts">
 				<button class="btn btn-primary" type="button" disabled={!dirty || busy} onclick={save}
 					>{busy ? 'Saving…' : 'Save theme'}</button
@@ -410,6 +528,27 @@
 	}
 	.seg button:hover {
 		color: var(--fg);
+	}
+	.seg .tag {
+		margin-left: 6px;
+		font-size: var(--text-xs);
+		color: var(--fg-quiet);
+	}
+	.variant-bar {
+		display: flex;
+		align-items: flex-start;
+		gap: var(--space-3);
+	}
+	.variant-bar .hint {
+		flex: 1;
+	}
+	.novariant {
+		display: grid;
+		gap: var(--space-3);
+		padding: var(--space-4);
+		border-radius: var(--radius-sm);
+		box-shadow: inset 0 0 0 1px var(--border-soft);
+		background: var(--surface);
 	}
 	.seg button.on {
 		background: var(--surface-raised);

@@ -12,14 +12,15 @@
 	import State from '$lib/components/State.svelte';
 	import Time from '$lib/components/Time.svelte';
 	import { listingAccent, listingStyle, readTheme } from '$lib/theme';
+	import { scheme } from '$lib/scheme.svelte';
 
 	let n = $state<Network | null>(null);
 	let owned = $state(false);
 	let error = $state<{ status: number; message: string } | null>(null);
 	let bannerFailed = $state(false);
 	let theme = $derived(readTheme(n?.theme));
-	let style = $derived(listingStyle(theme));
-	let accent = $derived(listingAccent(theme));
+	let style = $derived(listingStyle(theme, scheme.current));
+	let accent = $derived(listingAccent(theme, scheme.current));
 
 	async function load(id: string) {
 		error = null;
