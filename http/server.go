@@ -238,12 +238,19 @@ func Build(ctx context.Context, cfg config.Config, opts Options) (*App, error) {
 	}
 
 	internalMux := nethttp.NewServeMux()
+	// Account sign-in waiting on the auth service's JWKS is reported but
+	// doesn't fail readiness: listings and Network-key calls still work.
+	keys, _ := tokens.(interface{ KeysLoaded() bool })
 	ready := func(w nethttp.ResponseWriter, req *nethttp.Request) {
 		if err := sqlDB.PingContext(req.Context()); err != nil {
 			router.WriteJSON(w, nethttp.StatusServiceUnavailable, map[string]string{"status": "unavailable"})
 			return
 		}
-		router.WriteJSON(w, nethttp.StatusOK, map[string]string{"status": "ok"})
+		body := map[string]string{"status": "ok"}
+		if keys != nil && !keys.KeysLoaded() {
+			body["jwks"] = "loading"
+		}
+		router.WriteJSON(w, nethttp.StatusOK, body)
 	}
 	live := func(w nethttp.ResponseWriter, _ *nethttp.Request) {
 		router.WriteJSON(w, nethttp.StatusOK, map[string]string{"status": "ok"})
