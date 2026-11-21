@@ -117,6 +117,8 @@ const PUBLIC = [
 	'icon_url',
 	'banner_url',
 	'theme',
+	'channels',
+	'autojoin_channels',
 	'status',
 	'origin',
 	'origin_name',
@@ -138,6 +140,7 @@ const SLOTS = [
 	'pane-members'
 ];
 const HEX = /^#[0-9a-fA-F]{6}$/;
+const CHANNEL = /^#[\x21-\x2b\x2d-\x7e]{1,63}$/;
 /** The directory's boson-theme/1 checks, enough for the UI's error paths. */
 function themeError(t) {
 	if (!t || typeof t !== 'object' || Array.isArray(t)) return 'the theme must be a JSON object';
@@ -390,6 +393,8 @@ async function apiRoutes(req, res, path, url) {
 			description: b.description ?? '',
 			tags: b.tags ?? [],
 			languages: b.languages ?? [],
+			channels: b.channels ?? [],
+			autojoin_channels: b.autojoin_channels ?? [],
 			is_nsfw: !!b.is_nsfw,
 			website_url: b.website_url || null,
 			auth_url: null,
@@ -426,6 +431,17 @@ async function apiRoutes(req, res, path, url) {
 			return err(res, 409, 'not_local', 'imported listings are edited at their own directory');
 		if (m === 'PATCH' && !sub) {
 			const b = await body(req);
+			for (const k of ['channels', 'autojoin_channels']) {
+				const list = b[k];
+				if (list === undefined || list === null) continue;
+				if (!Array.isArray(list) || list.length > 50 || list.some((c) => !CHANNEL.test(String(c))))
+					return err(res, 400, 'invalid_' + k, `${k}: channel names look like #lobby`);
+				const seen = new Set();
+				n[k] = list.filter((c) => {
+					const f = c.replace(/[A-Z]/g, (x) => x.toLowerCase());
+					return !seen.has(f) && seen.add(f);
+				});
+			}
 			for (const k of ['name', 'description', 'tags', 'languages', 'is_nsfw', 'website_url'])
 				if (k in b) n[k] = b[k];
 			n.updated_at = new Date().toISOString();

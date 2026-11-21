@@ -50,7 +50,9 @@
 				tags: v.tags,
 				languages: v.languages,
 				is_nsfw: v.is_nsfw,
-				website_url: v.website_url
+				website_url: v.website_url,
+				channels: v.channels,
+				autojoin_channels: v.autojoin_channels
 			});
 			toasts.push('Listing saved.');
 		} catch (e) {

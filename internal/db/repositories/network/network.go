@@ -58,7 +58,11 @@ type Network struct {
 	BannerKey   *string
 	// Theme is the boson-theme/1 document (internal/services/theme), NULL
 	// when the listing has none. Image fields hold media keys or URLs.
-	Theme             JSONB `gorm:"type:jsonb"`
+	Theme JSONB `gorm:"type:jsonb"`
+	// Channels are the network's fixed channels and AutojoinChannels the
+	// ones new users join (names as written; never NULL).
+	Channels          pq.StringArray `gorm:"type:text[]"`
+	AutojoinChannels  pq.StringArray `gorm:"type:text[]"`
 	OwnerAuthUserID   *string
 	ManagementKeyHash *string
 	Origin            string

@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { normaliseHostname, normaliseTag, portError, urlError, validateNetwork } from './validate';
+import {
+	channelKey,
+	channelSummary,
+	normaliseChannel,
+	normaliseHostname,
+	normaliseTag,
+	portError,
+	urlError,
+	validateNetwork
+} from './validate';
 
 describe('normaliseHostname', () => {
 	it('lowercases and drops the trailing dot', () => {
@@ -56,5 +65,33 @@ describe('fields', () => {
 		expect(
 			validateNetwork({ name: 'X', description: '', tags: [], languages: [], website_url: '' }, false)
 		).toEqual({});
+	});
+});
+
+describe('channels', () => {
+	it('normalises typed channel names', () => {
+		expect(normaliseChannel(' #Lobby ')).toBe('#Lobby');
+		expect(normaliseChannel('help')).toBe('#help');
+		expect(normaliseChannel('##ops')).toBe('##ops');
+		expect(normaliseChannel('#' + 'x'.repeat(63))).toBe('#' + 'x'.repeat(63));
+		for (const bad of ['', '#', '#a b', '#a,b', '#' + 'x'.repeat(64), '#café'])
+			expect(normaliseChannel(bad)).toBe('');
+	});
+	it('compares ignoring ASCII case only', () => {
+		expect(channelKey('#LoBBy')).toBe('#lobby');
+		expect(channelKey('#É')).toBe('#É');
+	});
+	it('summarises the auto-join list', () => {
+		expect(channelSummary(['#lobby'])).toBe('#lobby');
+		expect(channelSummary(['#a', '#b', '#c', '#d'])).toBe('#a, #b +2');
+		expect(channelSummary([])).toBe('');
+		expect(channelSummary(undefined)).toBe('');
+	});
+	it('validates the lists', () => {
+		const base = { name: 'X', description: '', tags: [], languages: [], website_url: '' };
+		expect(validateNetwork({ ...base, channels: ['#ok'], autojoin_channels: ['#ok'] }, false)).toEqual({});
+		expect(validateNetwork({ ...base, channels: ['no hash'] }, false).channels).toBeTruthy();
+		const many = Array.from({ length: 51 }, (_, i) => `#c${i}`);
+		expect(validateNetwork({ ...base, autojoin_channels: many }, false).autojoin_channels).toBeTruthy();
 	});
 });

@@ -35,6 +35,7 @@ GETs are CORS `*`.
   "name": "Example", "description": "", "tags": ["foss"], "languages": ["en"], "is_nsfw": false,
   "website_url": "https://example.org", "auth_url": null, "icon_url": "…", "banner_url": "…",
   "theme": {"version": 1, "base": "dark", "colors": {"accent": "#7c3aed"}, "logo": "https://…"} | null,
+  "channels": ["#lobby", "#help"], "autojoin_channels": ["#lobby"],
   "status": "verified", "verification_status": "verified",
   "last_verified_at": "…", "last_checked_at": "…",
   "health_status": "up", "health_checked_at": "…", "user_count": 42, "user_count_at": "…",
@@ -78,8 +79,8 @@ only deleted or moderated by operators. Writes are rate limited per IP (429 `rat
 | | |
 |---|---|
 | `GET /v1/me/networks` | `{"listings": [Listing]}` (account or key) |
-| `POST /v1/networks` | body `{hostname, port, tls?=true, name, description?, tags?, languages?, is_nsfw?, website_url?, auth_url?}` → 201 Listing (status `pending`). The same owner (account or key) registering the same hostname again → 200 with the existing listing. 409 `hostname_taken`, 403 `blocked`, 400 `invalid_request`. A pending local listing whose token expired doesn't hold its hostname; a local registration replaces an imported listing. |
-| `PATCH /v1/networks/{id}` | `{name?, description?, tags?, languages?, is_nsfw?, website_url?, auth_url?}` → Listing. Hostname/port/tls are fixed (ignored). An empty `name` means unchanged. |
+| `POST /v1/networks` | body `{hostname, port, tls?=true, name, description?, tags?, languages?, is_nsfw?, website_url?, auth_url?, channels?, autojoin_channels?}` → 201 Listing (status `pending`). The same owner (account or key) registering the same hostname again → 200 with the existing listing. 409 `hostname_taken`, 403 `blocked`, 400 `invalid_request`. A pending local listing whose token expired doesn't hold its hostname; a local registration replaces an imported listing. |
+| `PATCH /v1/networks/{id}` | `{name?, description?, tags?, languages?, is_nsfw?, website_url?, auth_url?, channels?, autojoin_channels?}` → Listing. Hostname/port/tls are fixed (ignored). An empty `name` means unchanged. A list replaces the stored one (`[]` clears it; absent or `null` keeps it). 400 `invalid_channels` / `invalid_autojoin_channels` (see [Network channels](#network-channels)). |
 | `DELETE /v1/networks/{id}` | 204 |
 | `POST /v1/networks/{id}/verify` | 200 / 409 `{"network", "server" (same), "verification", "success", "report": {"success", "results": {"cloudflare"\|"google"\|"quad9": {"outcome": "match\|missing_record\|timeout\|error", "detail"?, "records"?}}}}`. 410 `token_expired` (pending > 72 h: regenerate), 429 `rate_limited` + `Retry-After` (1 per 30 s per network), 403 `blocked`. |
 | `POST /v1/networks/{id}/regenerate-token` | Listing (back to `pending`, new token, new 72 h window) |
@@ -127,6 +128,25 @@ Wrong owner: 403 `not_owner` for a public (verified) listing, 404 for one you ca
   its `/v1/branding` assets with its Network key). http URLs only outside production.
 - The federation feed carries `theme`; peers validate it again and hot-link its images, like
   icons and banners. An invalid theme is dropped (the listing is still imported).
+
+### Network channels
+
+`channels` are the network's fixed channels and `autojoin_channels` the ones new users are joined
+to (the stack's `irc.channels`, all of them and those with `autojoin: true`). Both are `string[]`,
+always present in the Network JSON (`[]` when none), and set by the owner (account or Network key,
+which is how the stack admin pushes them) with `POST` / `PATCH /v1/networks/{id}`.
+
+- At most 50 each. A name is `#` then 1–63 printable ASCII characters other than space and comma
+  (surrounding whitespace is trimmed). Anything else is a 400 `invalid_channels` /
+  `invalid_autojoin_channels` for the whole request.
+- Duplicates are dropped ignoring ASCII case; the first spelling and the order are kept.
+  `autojoin_channels` doesn't have to be a subset of `channels`.
+- Listing cards show "Joins #lobby" from `autojoin_channels`; the network page lists `channels`.
+  Boson joins a directory card's `autojoin_channels` on the first connect to that network.
+- The federation feed carries both (omitted when empty). Peers validate them again; a peer
+  that doesn't send them (an older directory) means none, and an invalid list is dropped without
+  rejecting the listing.
+- Rows from before migration 000006 read as `[]`.
 
 ### Operator (`directory.manage`, or `X-Internal-Token: $DIRECTORY_INTERNAL_TOKEN` + `X-Acting-User: <name>`)
 

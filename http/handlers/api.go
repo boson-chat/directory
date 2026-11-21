@@ -218,11 +218,15 @@ type editJSON struct {
 	IsNSFW      *bool     `json:"is_nsfw"`
 	WebsiteURL  *string   `json:"website_url"`
 	AuthURL     *string   `json:"auth_url"`
+	// Channels / AutojoinChannels replace the lists when present; [] clears,
+	// absent or null leaves them alone.
+	Channels         *[]string `json:"channels"`
+	AutojoinChannels *[]string `json:"autojoin_channels"`
 }
 
 func (e editJSON) edit() networks.Edit {
 	out := networks.Edit{Description: e.Description, Tags: e.Tags, Languages: e.Languages, IsNSFW: e.IsNSFW,
-		WebsiteURL: e.WebsiteURL, AuthURL: e.AuthURL}
+		WebsiteURL: e.WebsiteURL, AuthURL: e.AuthURL, Channels: e.Channels, AutojoinChannels: e.AutojoinChannels}
 	// An empty name means "unchanged" (the admin panel sends omitempty fields).
 	if e.Name != nil && strings.TrimSpace(*e.Name) != "" {
 		out.Name = e.Name

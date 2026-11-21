@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { Network } from '$lib/types';
 	import { address, joinUrl, langName, originLabel } from '$lib/links';
+	import { channelSummary } from '$lib/validate';
 	import { listingAccent, listingStyle, readTheme } from '$lib/theme';
 	import { scheme } from '$lib/scheme.svelte';
 	import NetworkIcon from './NetworkIcon.svelte';
@@ -29,6 +30,11 @@
 			</div>
 		</div>
 		{#if n.description}<p class="desc">{n.description}</p>{/if}
+		{#if n.autojoin_channels?.length}
+			<p class="joins" title="New users join {n.autojoin_channels.join(', ')}">
+				Joins <span>{channelSummary(n.autojoin_channels)}</span>
+			</p>
+		{/if}
 		<div class="meta">
 			<Health status={n.health_status} users={n.user_count} />
 			{#if n.languages.length}
@@ -166,6 +172,17 @@
 		line-clamp: 2;
 		-webkit-box-orient: vertical;
 		overflow: hidden;
+	}
+	.joins {
+		font-size: var(--text-xs);
+		color: var(--fg-quiet);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.joins span {
+		font-family: var(--font-mono);
+		color: var(--fg-2);
 	}
 	.meta {
 		display: flex;

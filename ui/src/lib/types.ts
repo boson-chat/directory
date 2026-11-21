@@ -26,6 +26,10 @@ export interface Network {
 	banner_url?: string | null;
 	/** The network's boson-theme/1 branding (absolute image URLs); null when it has none. */
 	theme?: BosonTheme | null;
+	/** The network's fixed channels (names as written); [] when none. Older directories omit it. */
+	channels?: string[];
+	/** The channels new users are joined to ("Joins #lobby"); [] when none. */
+	autojoin_channels?: string[];
 	status: NetworkStatus;
 	/** Same as `status`, for clients written against /servers. */
 	verification_status?: NetworkStatus;
@@ -138,6 +142,8 @@ export interface NetworkInput {
 	languages: string[];
 	is_nsfw: boolean;
 	website_url: string;
+	channels: string[];
+	autojoin_channels: string[];
 }
 
 export type NetworkPatch = Partial<Omit<NetworkInput, 'hostname' | 'port' | 'tls'>>;

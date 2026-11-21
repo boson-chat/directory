@@ -97,6 +97,21 @@
 						{#each n.tags as t (t)}<a class="tag" href="/?tag={encodeURIComponent(t)}">{t}</a>{/each}
 					</div>
 				{/if}
+				{#if n.channels?.length || n.autojoin_channels?.length}
+					<section class="chans" aria-labelledby="chans-h">
+						<h2 id="chans-h">Channels</h2>
+						{#if n.autojoin_channels?.length}
+							<p class="joins">
+								Joins <span class="mono">{n.autojoin_channels.join(', ')}</span> when you first connect.
+							</p>
+						{/if}
+						{#if n.channels?.length}
+							<ul class="chips">
+								{#each n.channels as c (c)}<li class="tag">{c}</li>{/each}
+							</ul>
+						{/if}
+					</section>
+				{/if}
 				<div class="connect">
 					<h2>Connect from another client</h2>
 					<div class="cf">
@@ -277,6 +292,33 @@
 	.tags a:hover {
 		color: var(--fg);
 		box-shadow: inset 0 0 0 1px var(--fg-3);
+	}
+	.chans {
+		display: grid;
+		gap: var(--space-2);
+	}
+	.joins {
+		font-size: var(--text-sm);
+		color: var(--fg-2);
+	}
+	.mono {
+		font-family: var(--font-mono);
+		color: var(--fg);
+	}
+	.chips {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+		display: flex;
+		flex-wrap: wrap;
+		gap: var(--space-1);
+	}
+	.chips .tag {
+		font-family: var(--font-mono);
+		text-transform: none;
+		letter-spacing: 0;
+		font-size: var(--text-xs);
+		padding: 3px 8px;
 	}
 	.connect {
 		display: grid;

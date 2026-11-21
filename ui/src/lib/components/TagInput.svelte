@@ -1,20 +1,46 @@
 <script lang="ts">
 	import { normaliseTag, LIMITS } from '$lib/validate';
 
-	/** Free-form topics as removable chips. Enter, comma or Tab adds the typed tag. */
+	/**
+	 * Free-form entries as removable chips. Enter, comma or Tab adds the typed
+	 * entry. Topics by default; `normalise`/`key`/`max` make it a channel list.
+	 */
 	let {
 		tags = $bindable([]),
 		id,
 		describedby,
-		invalid = false
-	}: { tags?: string[]; id?: string; describedby?: string; invalid?: boolean } = $props();
+		labelledby,
+		invalid = false,
+		normalise = normaliseTag,
+		key = (t: string) => t,
+		max = LIMITS.tags,
+		placeholder = 'gaming, linux, music',
+		full = 'That’s the most tags'
+	}: {
+		tags?: string[];
+		id?: string;
+		describedby?: string;
+		labelledby?: string;
+		invalid?: boolean;
+		/** Returns the entry to add, or '' when the text can't be one (it stays in the box). */
+		normalise?: (raw: string) => string;
+		/** Duplicate check: entries with the same key are one entry. */
+		key?: (t: string) => string;
+		max?: number;
+		placeholder?: string;
+		full?: string;
+	} = $props();
 	let draft = $state('');
 	let input = $state<HTMLInputElement>();
 
 	function add() {
-		const t = normaliseTag(draft);
+		const t = normalise(draft);
+		if (!t) {
+			if (!draft.trim()) draft = '';
+			return;
+		}
 		draft = '';
-		if (t && !tags.includes(t) && tags.length < LIMITS.tags) tags = [...tags, t];
+		if (!tags.some((x) => key(x) === key(t)) && tags.length < max) tags = [...tags, t];
 	}
 	function remove(t: string) {
 		tags = tags.filter((x) => x !== t);
@@ -44,13 +70,10 @@
 		bind:value={draft}
 		{onkeydown}
 		onblur={add}
-		placeholder={tags.length >= LIMITS.tags
-			? 'That’s the most tags'
-			: tags.length
-				? 'Add another'
-				: 'gaming, linux, music'}
-		disabled={tags.length >= LIMITS.tags}
+		placeholder={tags.length >= max ? full : tags.length ? 'Add another' : placeholder}
+		disabled={tags.length >= max}
 		aria-describedby={describedby}
+		aria-labelledby={labelledby}
 		aria-invalid={invalid || undefined}
 		autocomplete="off"
 		spellcheck="false"

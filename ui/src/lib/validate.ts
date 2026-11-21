@@ -6,7 +6,8 @@ export const LIMITS = {
 	description: 500,
 	tags: 8,
 	tag: 24,
-	languages: 5
+	languages: 5,
+	channels: 50
 };
 
 const ipv4 = /^\d{1,3}(\.\d{1,3}){3}$/;
@@ -54,6 +55,29 @@ export function normaliseTag(t: string): string {
 		.slice(0, LIMITS.tag);
 }
 
+/** A channel name a listing may carry: '#', then 1–63 printable ASCII characters, no spaces or commas. */
+export const CHANNEL = /^#[\x21-\x2b\x2d-\x7e]{1,63}$/;
+
+/** Trims a typed channel and adds the leading '#'; '' when it can't be a channel name. */
+export function normaliseChannel(c: string): string {
+	let t = c.trim();
+	if (!t) return '';
+	if (!t.startsWith('#')) t = '#' + t;
+	return CHANNEL.test(t) ? t : '';
+}
+
+/** Channels compare ignoring ASCII case (IRC folding), keeping the written case. */
+export function channelKey(c: string): string {
+	return c.replace(/[A-Z]/g, (x) => x.toLowerCase());
+}
+
+/** The first `max` channel names, as the card shows them: "#lobby, #help +2". */
+export function channelSummary(list: string[] | undefined, max = 2): string {
+	if (!list?.length) return '';
+	const head = list.slice(0, max).join(', ');
+	return list.length > max ? `${head} +${list.length - max}` : head;
+}
+
 export function urlError(u: string): string {
 	if (!u.trim()) return '';
 	try {
@@ -73,6 +97,8 @@ export interface FormErrors {
 	tags?: string;
 	languages?: string;
 	website_url?: string;
+	channels?: string;
+	autojoin_channels?: string;
 }
 
 export function validateNetwork(
@@ -84,6 +110,8 @@ export function validateNetwork(
 		tags: string[];
 		languages: string[];
 		website_url: string;
+		channels?: string[];
+		autojoin_channels?: string[];
 	},
 	identity = true
 ): FormErrors {
@@ -101,6 +129,12 @@ export function validateNetwork(
 		e.description = `Keep the description to ${LIMITS.description} characters.`;
 	if (v.tags.length > LIMITS.tags) e.tags = `Use up to ${LIMITS.tags} tags.`;
 	if (v.languages.length > LIMITS.languages) e.languages = `Pick up to ${LIMITS.languages} languages.`;
+	for (const f of ['channels', 'autojoin_channels'] as const) {
+		const list = v[f] ?? [];
+		if (list.length > LIMITS.channels) e[f] = `Use up to ${LIMITS.channels} channels.`;
+		else if (list.some((c) => !CHANNEL.test(c)))
+			e[f] = 'Channel names look like #lobby, without spaces or commas.';
+	}
 	const w = urlError(v.website_url);
 	if (w) e.website_url = w;
 	return e;
