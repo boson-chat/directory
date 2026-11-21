@@ -279,6 +279,16 @@ const seedThemes = {
 	}
 };
 
+// A few listings publish their network channels (what the stack admin pushes).
+const seedChannels = {
+	0: { channels: ['#lobby', '#help', '#dev', '#offtopic'], autojoin_channels: ['#lobby'] },
+	1: { channels: ['#Linux', '#kernel', '#distros'], autojoin_channels: ['#Linux', '#distros'] },
+	2: {
+		channels: ['#welcome', '#games', '#music', '#art', '#memes', '#voice'],
+		autojoin_channels: ['#welcome', '#games', '#music']
+	}
+};
+
 export function seedNetworks() {
 	const out = [];
 	let n = 0;
@@ -309,6 +319,7 @@ export function seedNetworks() {
 				icon_url: i % 6 === 2 ? null : `/media/icon-${i}.svg`,
 				banner_url: i % 4 === 1 ? null : `/media/banner-${i}.svg`,
 				theme: seedThemes[i] ?? null,
+				...(seedChannels[i] ?? { channels: [], autojoin_channels: [] }),
 				status: 'verified',
 				origin,
 				origin_name: origin === 'local' ? null : peers.find((p) => 'peer:' + p.id === origin)?.name,
@@ -338,6 +349,8 @@ export function demoOwned() {
 		auth_url: null,
 		icon_url: null,
 		banner_url: null,
+		channels: [],
+		autojoin_channels: [],
 		origin: 'local',
 		health_status: 'unknown',
 		user_count: null,
@@ -356,6 +369,8 @@ export function demoOwned() {
 			user_count: 142,
 			icon_url: '/media/icon-3.svg',
 			banner_url: '/media/banner-3.svg',
+			channels: ['#lobby', '#help'],
+			autojoin_channels: ['#lobby'],
 			theme: {
 				version: 1,
 				base: 'dark',

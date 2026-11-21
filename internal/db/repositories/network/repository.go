@@ -44,6 +44,12 @@ func (r *NetworkRepository) Create(ctx context.Context, n *Network) error {
 	if n.Languages == nil {
 		n.Languages = []string{}
 	}
+	if n.Channels == nil {
+		n.Channels = []string{}
+	}
+	if n.AutojoinChannels == nil {
+		n.AutojoinChannels = []string{}
+	}
 	if n.Origin == "" {
 		n.Origin = OriginLocal
 	}
@@ -385,7 +391,8 @@ func (r *NetworkRepository) UnblockMatching(ctx context.Context, pattern string,
 
 // upsertColumns are the public fields a peer import may set.
 var upsertColumns = []string{"hostname", "port", "tls", "name", "description", "tags", "languages", "is_nsfw",
-	"website_url", "auth_url", "icon_key", "banner_key", "theme"}
+	"website_url", "auth_url", "icon_key", "banner_key", "theme",
+	"channels", "autojoin_channels"}
 
 func (r *NetworkRepository) UpsertByOrigin(ctx context.Context, n *Network) (UpsertResult, error) {
 	if n.Origin == "" || n.Origin == OriginLocal || n.OriginID == nil || *n.OriginID == "" {
@@ -424,6 +431,12 @@ func (r *NetworkRepository) UpsertByOrigin(ctx context.Context, n *Network) (Ups
 			}
 			if n.Languages == nil {
 				n.Languages = []string{}
+			}
+			if n.Channels == nil {
+				n.Channels = []string{}
+			}
+			if n.AutojoinChannels == nil {
+				n.AutojoinChannels = []string{}
 			}
 			before := cur.Seq
 			if err := r.db.Conn(ctx).Model(&Network{ID: cur.ID}).Select(cols).Updates(n).Error; err != nil {

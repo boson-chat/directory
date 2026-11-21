@@ -43,9 +43,13 @@ type FeedNetwork struct {
 	IconURL     *string  `json:"icon_url,omitempty"`
 	BannerURL   *string  `json:"banner_url,omitempty"`
 	// Theme is the listing's boson-theme/1 document, image URLs absolute.
-	Theme     json.RawMessage `json:"theme,omitempty"`
-	CreatedAt *time.Time      `json:"created_at,omitempty"`
-	UpdatedAt *time.Time      `json:"updated_at,omitempty"`
+	Theme json.RawMessage `json:"theme,omitempty"`
+	// Channels / AutojoinChannels: the network's fixed and auto-join
+	// channels. Omitted when empty; a peer that doesn't send them means none.
+	Channels         []string   `json:"channels,omitempty"`
+	AutojoinChannels []string   `json:"autojoin_channels,omitempty"`
+	CreatedAt        *time.Time `json:"created_at,omitempty"`
+	UpdatedAt        *time.Time `json:"updated_at,omitempty"`
 }
 
 // FeedChange is one entry of the feed. A deleted entry carries only the
@@ -114,7 +118,8 @@ func buildFeed(changes []network.Change, since int64, limit int, mediaURL func(s
 					Description: n.Description, Tags: n.Tags, Languages: n.Languages, IsNSFW: n.IsNSFW,
 					WebsiteURL: n.WebsiteURL, AuthURL: n.AuthURL,
 					IconURL: mediaURLPtr(n.IconKey, mediaURL), BannerURL: mediaURLPtr(n.BannerKey, mediaURL),
-					Theme:     th,
+					Theme:    th,
+					Channels: n.Channels, AutojoinChannels: n.AutojoinChannels,
 					CreatedAt: &created, UpdatedAt: &updated,
 				},
 			})
@@ -228,6 +233,20 @@ func importedTheme(raw json.RawMessage, strict bool) (network.JSONB, error) {
 		return nil, err
 	}
 	return t.Encode(), nil
+}
+
+// importedChannels validates a peer's channel lists like an owner's write.
+// A bad list is dropped (the listing shows without it), not the listing.
+func importedChannels(n *network.Network, fn FeedNetwork) []string {
+	var problems []string
+	var err error
+	if n.Channels, err = networks.CleanChannels(fn.Channels, "channels"); err != nil {
+		n.Channels, problems = []string{}, append(problems, "channels dropped: "+err.Error())
+	}
+	if n.AutojoinChannels, err = networks.CleanChannels(fn.AutojoinChannels, "autojoin_channels"); err != nil {
+		n.AutojoinChannels, problems = []string{}, append(problems, "autojoin_channels dropped: "+err.Error())
+	}
+	return problems
 }
 
 func trunc(s string) string {

@@ -16,6 +16,7 @@ network's `_boson.<hostname>` TXT record itself.
       "name": "…", "description": "…", "tags": ["…"], "languages": ["en"], "is_nsfw": false,
       "website_url": "https://…", "auth_url": "https://…", "icon_url": "https://…", "banner_url": "https://…",
       "theme": {"version": 1, "base": "dark", "colors": {"accent": "#7c3aed"}, "logo": "https://…"},
+      "channels": ["#lobby", "#help"], "autojoin_channels": ["#lobby"],
       "created_at": "…", "updated_at": "…"},
      "verification_token": "…", "deleted": false},
     {"seq": 42, "network": {"id": "net_…"}, "deleted": true}
@@ -38,6 +39,13 @@ network's `_boson.<hostname>` TXT record itself.
   images; an invalid theme is dropped without rejecting the listing. A page
   ends early (`has_more: true`) once its themes reach 3 MiB. Its optional
   `variants.<dark|light>` (the version for the other base) travels with it.
+- `channels` and `autojoin_channels` (the network's fixed and auto-join
+  channels, names as written) are omitted when empty. Importers validate them
+  with the owner-write rules (≤ 50, `#` + 1–63 printable ASCII, no space or
+  comma, de-duplicated ignoring case); a missing list means none and an
+  invalid list is dropped without rejecting the listing.
+- Readers ignore fields they don't know, so new listing fields can be added
+  without breaking older peers.
 
 ## Peers (operator API, `directory.manage`)
 

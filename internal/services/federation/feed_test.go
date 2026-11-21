@@ -170,3 +170,74 @@ func TestFeedPageStopsAtThemeBudget(t *testing.T) {
 		t.Fatalf("has_more=%v changes=%d next=%d", page.HasMore, len(page.Changes), page.NextSince)
 	}
 }
+
+func TestFeedCarriesChannels(t *testing.T) {
+	now := time.Now()
+	changes := []network.Change{
+		{Seq: 3, Network: &network.Network{ID: "net_1", Hostname: "irc.a.test", Port: 6697, Name: "A",
+			Origin: network.OriginLocal, Status: network.StatusVerified, VerificationToken: "tok-aaaaaaaa",
+			Channels: []string{"#Lobby", "#help"}, AutojoinChannels: []string{"#Lobby"}, CreatedAt: now, UpdatedAt: now}},
+		{Seq: 4, Network: &network.Network{ID: "net_2", Hostname: "irc.b.test", Port: 6697, Name: "B",
+			Origin: network.OriginLocal, Status: network.StatusVerified, VerificationToken: "tok-bbbbbbbb",
+			Channels: []string{}, AutojoinChannels: []string{}, CreatedAt: now, UpdatedAt: now}},
+	}
+	page := buildFeed(changes, 0, 10, func(k string) string { return k })
+	raw, _ := json.Marshal(page.Changes[0])
+	if !strings.Contains(string(raw), `"channels":["#Lobby","#help"],"autojoin_channels":["#Lobby"]`) {
+		t.Fatalf("feed lacks the channels: %s", raw)
+	}
+	raw, _ = json.Marshal(page.Changes[1])
+	if strings.Contains(string(raw), "channels") {
+		t.Fatalf("empty channel lists must be omitted: %s", raw)
+	}
+
+	// Round trip through JSON into an importer, as a peer sees it.
+	raw, _ = json.Marshal(page.Changes[0])
+	var c FeedChange
+	if err := json.Unmarshal(raw, &c); err != nil {
+		t.Fatal(err)
+	}
+	c.VerificationToken = "AbCdEfGhIjKlMnOp_-123"
+	n, err := importedNetwork("peer:per_1", c, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := importedChannels(n, c.Network); p != nil {
+		t.Fatal(p)
+	}
+	if strings.Join(n.Channels, " ") != "#Lobby #help" || strings.Join(n.AutojoinChannels, " ") != "#Lobby" {
+		t.Fatalf("imported channels %q autojoin %q", n.Channels, n.AutojoinChannels)
+	}
+}
+
+func TestImportedChannelsOldPeersAndBadLists(t *testing.T) {
+	// An old peer sends no channel keys: empty lists, never NULL.
+	var c FeedChange
+	if err := json.Unmarshal([]byte(`{"seq":1,"verification_token":"AbCdEfGhIjKlMnOp","network":{"id":"net_1","hostname":"irc.example.org","port":6697,"tls":true,"name":"X"}}`), &c); err != nil {
+		t.Fatal(err)
+	}
+	n, err := importedNetwork("peer:per_1", c, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := importedChannels(n, c.Network); p != nil || n.Channels == nil || n.AutojoinChannels == nil ||
+		len(n.Channels)+len(n.AutojoinChannels) != 0 {
+		t.Fatalf("old peer: %q %q %v", n.Channels, n.AutojoinChannels, p)
+	}
+	// Unknown keys from a newer peer are ignored, not rejected.
+	if err := json.Unmarshal([]byte(`{"seq":1,"network":{"id":"net_1","future_field":{"x":1},"channels":["#a"]},"future":true}`), &c); err != nil {
+		t.Fatalf("unknown fields rejected: %v", err)
+	}
+	// A bad list is dropped with a problem; the listing stays.
+	c = validChange()
+	c.Network.Channels = []string{"#ok", "bad name"}
+	c.Network.AutojoinChannels = []string{"#ok"}
+	n, err = importedNetwork("peer:per_1", c, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := importedChannels(n, c.Network)
+	if len(p) != 1 || !strings.Contains(p[0], "channels dropped") || len(n.Channels) != 0 || len(n.AutojoinChannels) != 1 {
+		t.Fatalf("bad list: %q %q %v", n.Channels, n.AutojoinChannels, p)
+	}
+}

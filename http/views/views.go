@@ -31,6 +31,10 @@ type Network struct {
 	// Theme is the listing's boson-theme/1 document with absolute image
 	// URLs; null when it has none.
 	Theme json.RawMessage `json:"theme"`
+	// Channels are the network's fixed channels; AutojoinChannels the ones
+	// new users are joined to. Names as written; [] when none.
+	Channels         []string `json:"channels"`
+	AutojoinChannels []string `json:"autojoin_channels"`
 	// LegacyID is the listing's id on the legacy boson API directory (a
 	// uuid), for rows imported from it: clients match servers saved under it.
 	LegacyID *string `json:"legacy_id,omitempty"`
@@ -101,6 +105,7 @@ func NewNetwork(n *network.Network, m media.MediaServiceImpl) Network {
 	out := Network{
 		ID: n.ID, Hostname: n.Hostname, Port: n.Port, TLS: n.TLS, Name: n.Name, Description: n.Description,
 		Tags: nonNil(n.Tags), Languages: nonNil(n.Languages), IsNSFW: n.IsNSFW,
+		Channels: nonNil(n.Channels), AutojoinChannels: nonNil(n.AutojoinChannels),
 		WebsiteURL: n.WebsiteURL, AuthURL: n.AuthURL,
 		Status: n.Status, VerificationStatus: n.Status, LastVerifiedAt: n.LastVerifiedAt, LastCheckedAt: n.LastCheckedAt,
 		HealthStatus: n.HealthStatus, HealthCheckedAt: n.HealthCheckedAt, UserCount: n.UserCount, UserCountAt: n.UserCountAt,

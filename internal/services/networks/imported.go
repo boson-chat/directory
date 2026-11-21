@@ -17,3 +17,7 @@ func CleanLanguages(in []string) ([]string, error) { return cleanLanguages(in) }
 
 // CleanURL returns nil for empty, else requires an https URL.
 func CleanURL(v *string, name string) (*string, error) { return cleanURL(v, name) }
+
+// CleanChannels validates channel names (ValidChannel), at most MaxChannels,
+// de-duplicated ignoring ASCII case. field names the list in errors.
+func CleanChannels(in []string, field string) ([]string, error) { return cleanChannels(in, field) }

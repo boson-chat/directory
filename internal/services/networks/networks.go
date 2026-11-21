@@ -75,6 +75,10 @@ type Submission struct {
 	IsNSFW      *bool    `json:"is_nsfw,omitempty"`
 	WebsiteURL  *string  `json:"website_url,omitempty"`
 	AuthURL     *string  `json:"auth_url,omitempty"`
+	// Channels are the network's fixed channels, AutojoinChannels the ones
+	// new users are joined to (see CleanChannels).
+	Channels         []string `json:"channels,omitempty"`
+	AutojoinChannels []string `json:"autojoin_channels,omitempty"`
 }
 
 // Edit is PATCH: nil fields are left alone; Tags/Languages replace when set.
@@ -86,6 +90,9 @@ type Edit struct {
 	IsNSFW      *bool
 	WebsiteURL  *string
 	AuthURL     *string
+	// Channels / AutojoinChannels replace when set ([] clears).
+	Channels         *[]string
+	AutojoinChannels *[]string
 }
 
 // CreateResult: Created is false when an identical registration already

@@ -76,7 +76,7 @@ test('register validates, then shows the TXT record', async ({ page }, info) => 
 	await expect(page.getByText('Saved as irc.fresh-start.example.')).toBeVisible();
 	await page.getByLabel('Network name').fill('Fresh Start');
 	await page.getByLabel('Description').fill('A brand new network.');
-	const tags = page.locator('.tags input');
+	const tags = page.getByRole('textbox', { name: 'Topics' });
 	await tags.fill('Retro Gaming');
 	await tags.press('Enter');
 	await page.getByRole('combobox', { name: 'Languages' }).click();

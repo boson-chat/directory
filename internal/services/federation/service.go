@@ -990,6 +990,9 @@ func (s *FederationService) apply(ctx context.Context, origin string, c FeedChan
 		res.problem(fmt.Sprintf("%s: theme dropped: %v", trunc(id), err))
 		n.Theme = nil
 	}
+	for _, p := range importedChannels(n, c.Network) {
+		res.problem(trunc(id) + ": " + p)
+	}
 	if seen != nil {
 		seen[id] = true
 	}

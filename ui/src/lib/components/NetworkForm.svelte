@@ -1,6 +1,13 @@
 <script lang="ts">
 	import type { NetworkInput, OwnedNetwork } from '$lib/types';
-	import { LIMITS, normaliseHostname, validateNetwork, type FormErrors } from '$lib/validate';
+	import {
+		LIMITS,
+		channelKey,
+		normaliseChannel,
+		normaliseHostname,
+		validateNetwork,
+		type FormErrors
+	} from '$lib/validate';
 	import { LANGUAGES, langName } from '$lib/links';
 	import type { DropdownOption } from '$lib/dropdown';
 	import Dropdown from './Dropdown.svelte';
@@ -38,6 +45,8 @@
 	let languages = $state<string[]>([...(seed.languages ?? [])]);
 	let nsfw = $state(seed.is_nsfw ?? false);
 	let website = $state(seed.website_url ?? '');
+	let channels = $state<string[]>([...(seed.channels ?? [])]);
+	let autojoin = $state<string[]>([...(seed.autojoin_channels ?? [])]);
 
 	let errors = $state<FormErrors>({});
 	let touched = $state(false);
@@ -55,7 +64,17 @@
 	});
 
 	function current() {
-		return { hostname, port, name, description, tags, languages, website_url: website };
+		return {
+			hostname,
+			port,
+			name,
+			description,
+			tags,
+			languages,
+			website_url: website,
+			channels,
+			autojoin_channels: autojoin
+		};
 	}
 	$effect(() => {
 		if (touched) errors = validateNetwork(current(), mode === 'create');
@@ -81,7 +100,9 @@
 				tags,
 				languages,
 				is_nsfw: nsfw,
-				website_url: website.trim()
+				website_url: website.trim(),
+				channels,
+				autojoin_channels: autojoin
 			});
 			if (server) errors = server;
 		} finally {
@@ -167,7 +188,13 @@
 		<div class="row2">
 			<div class="field">
 				<span id="{uid}-tags-l">Topics</span>
-				<TagInput bind:tags id="{uid}-tags" describedby="{uid}-tags-h" invalid={!!errors.tags} />
+				<TagInput
+					bind:tags
+					id="{uid}-tags"
+					labelledby="{uid}-tags-l"
+					describedby="{uid}-tags-h"
+					invalid={!!errors.tags}
+				/>
 				<small id="{uid}-tags-h" class:err={errors.tags}
 					>{errors.tags ?? `Up to ${LIMITS.tags}. Press Enter after each one.`}</small
 				>
@@ -185,6 +212,44 @@
 				/>
 				<small id="{uid}-lang-h" class:err={errors.languages}
 					>{errors.languages ?? 'The languages people chat in.'}</small
+				>
+			</div>
+		</div>
+		<div class="row2">
+			<div class="field">
+				<span id="{uid}-ch-l">Channels</span>
+				<TagInput
+					bind:tags={channels}
+					id="{uid}-ch"
+					labelledby="{uid}-ch-l"
+					describedby="{uid}-ch-h"
+					invalid={!!errors.channels}
+					normalise={normaliseChannel}
+					key={channelKey}
+					max={LIMITS.channels}
+					placeholder="#lobby, #help"
+					full="That’s the most channels"
+				/>
+				<small id="{uid}-ch-h" class:err={errors.channels}
+					>{errors.channels ?? 'The network’s main channels, listed on its page.'}</small
+				>
+			</div>
+			<div class="field">
+				<span id="{uid}-aj-l">New users join</span>
+				<TagInput
+					bind:tags={autojoin}
+					id="{uid}-aj"
+					labelledby="{uid}-aj-l"
+					describedby="{uid}-aj-h"
+					invalid={!!errors.autojoin_channels}
+					normalise={normaliseChannel}
+					key={channelKey}
+					max={LIMITS.channels}
+					placeholder="#lobby"
+					full="That’s the most channels"
+				/>
+				<small id="{uid}-aj-h" class:err={errors.autojoin_channels}
+					>{errors.autojoin_channels ?? 'Joined on first connect. Shown as “Joins #lobby”.'}</small
 				>
 			</div>
 		</div>

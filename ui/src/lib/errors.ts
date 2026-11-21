@@ -17,6 +17,10 @@ export function fieldErrors(e: unknown): FormErrors | null {
 			return { name: e.message };
 		case 'invalid_website_url':
 			return { website_url: e.message };
+		case 'invalid_channels':
+			return { channels: e.message };
+		case 'invalid_autojoin_channels':
+			return { autojoin_channels: e.message };
 		default:
 			return null;
 	}

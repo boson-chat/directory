@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/url"
 	"regexp"
 	"strings"
@@ -339,6 +340,62 @@ func cleanLanguages(in []string) ([]string, error) {
 	return out, nil
 }
 
+// MaxChannels caps channels and autojoin_channels.
+const MaxChannels = 50
+
+// ValidChannel reports whether c is a channel name a listing may carry:
+// '#', then 1..63 printable ASCII characters other than space and comma.
+func ValidChannel(c string) bool {
+	if len(c) < 2 || len(c) > 64 || c[0] != '#' {
+		return false
+	}
+	for i := 1; i < len(c); i++ {
+		if b := c[i]; b <= ' ' || b > '~' || b == ',' {
+			return false
+		}
+	}
+	return true
+}
+
+// cleanChannels trims, validates and de-duplicates channel names ignoring
+// ASCII case, keeping the first spelling and the order.
+func cleanChannels(in []string, field string) ([]string, error) {
+	if len(in) > MaxChannels {
+		return nil, apperr.New(400, "invalid_"+field, fmt.Sprintf("at most %d %s", MaxChannels, field))
+	}
+	out := make([]string, 0, len(in))
+	seen := make(map[string]bool, len(in))
+	for _, c := range in {
+		c = strings.TrimSpace(c)
+		if !ValidChannel(c) {
+			return nil, apperr.New(400, "invalid_"+field, fmt.Sprintf("%s: %q isn't a channel name like #lobby ('#', then 1–63 characters, no spaces or commas)", field, trunc(c)))
+		}
+		k := asciiLower(c)
+		if !seen[k] {
+			seen[k] = true
+			out = append(out, c)
+		}
+	}
+	return out, nil
+}
+
+func trunc(s string) string {
+	if len(s) > 70 {
+		return s[:70] + "…"
+	}
+	return s
+}
+
+func asciiLower(s string) string {
+	b := []byte(s)
+	for i, c := range b {
+		if c >= 'A' && c <= 'Z' {
+			b[i] = c + 32
+		}
+	}
+	return string(b)
+}
+
 func contains(list []string, v string) bool {
 	for _, x := range list {
 		if x == v {
@@ -418,6 +475,12 @@ func (s *NetworkService) Create(ctx context.Context, p *principal.Principal, sub
 		return nil, err
 	}
 	if n.AuthURL, err = cleanURL(sub.AuthURL, "the sign-in URL"); err != nil {
+		return nil, err
+	}
+	if n.Channels, err = cleanChannels(sub.Channels, "channels"); err != nil {
+		return nil, err
+	}
+	if n.AutojoinChannels, err = cleanChannels(sub.AutojoinChannels, "autojoin_channels"); err != nil {
 		return nil, err
 	}
 
@@ -535,6 +598,18 @@ func (s *NetworkService) Update(ctx context.Context, p *principal.Principal, id 
 			return nil, err
 		}
 		cols = append(cols, "auth_url")
+	}
+	if e.Channels != nil {
+		if n.Channels, err = cleanChannels(*e.Channels, "channels"); err != nil {
+			return nil, err
+		}
+		cols = append(cols, "channels")
+	}
+	if e.AutojoinChannels != nil {
+		if n.AutojoinChannels, err = cleanChannels(*e.AutojoinChannels, "autojoin_channels"); err != nil {
+			return nil, err
+		}
+		cols = append(cols, "autojoin_channels")
 	}
 	if len(cols) == 0 {
 		return n, nil
