@@ -1,6 +1,9 @@
 // Seed data for the mock directory: deterministic, so screenshots are stable.
 
-const NOW = Date.parse('2026-11-14T12:00:00Z');
+// Fixture times are relative to now (to the hour), so pending DNS records
+// don't expire as the calendar moves on (a fixed date broke the e2e suite
+// once its 72 h record TTL passed).
+const NOW = Math.floor(Date.now() / 3600_000) * 3600_000;
 const hours = (h) => new Date(NOW - h * 3600_000).toISOString();
 
 const palette = ['#d97706', '#10b981', '#3b82f6', '#a855f7', '#ef4444', '#14b8a6', '#eab308', '#ec4899'];
