@@ -241,3 +241,51 @@ func TestImportedChannelsOldPeersAndBadLists(t *testing.T) {
 		t.Fatalf("bad list: %q %q %v", n.Channels, n.AutojoinChannels, p)
 	}
 }
+
+// A moved listing is exported as an update of the same id with its new
+// hostname and the hostnames it left; a listing that never moved omits
+// the field (older readers never see it).
+func TestFeedCarriesPreviousHostnames(t *testing.T) {
+	now := time.Now()
+	changes := []network.Change{
+		{Seq: 1, Network: &network.Network{ID: "net_1", Hostname: "irc.boson.example.org", Port: 6697, TLS: true, Name: "A",
+			Origin: network.OriginLocal, Status: network.StatusVerified, VerificationToken: "tok-aaaaaaaa",
+			PreviousHostnames: []string{"irc.example.org"}, CreatedAt: now, UpdatedAt: now}},
+		{Seq: 2, Network: &network.Network{ID: "net_2", Hostname: "irc.b.test", Port: 6697, Name: "B",
+			Origin: network.OriginLocal, Status: network.StatusVerified, VerificationToken: "tok-bbbbbbbb", PreviousHostnames: []string{}}},
+	}
+	page := buildFeed(changes, 0, 10, func(k string) string { return k })
+	raw, _ := json.Marshal(page)
+	if !strings.Contains(string(raw), `"previous_hostnames":["irc.example.org"]`) || strings.Count(string(raw), "previous_hostnames") != 1 {
+		t.Fatalf("feed JSON: %s", raw)
+	}
+	if c := page.Changes[0]; c.Deleted || c.Network.ID != "net_1" || c.Network.Hostname != "irc.boson.example.org" {
+		t.Fatalf("moved listing: %+v", c)
+	}
+}
+
+func TestImportedPreviousHostnames(t *testing.T) {
+	c := validChange()
+	c.Network.PreviousHostnames = []string{"irc.old.example.org", "IRC.Upper.example.org", "irc.example.org", "irc.old.example.org", "not a host", "10.0.0.1"}
+	n, err := importedNetwork("peer:per_x", c, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	problems := importedPreviousHostnames(n, c.Network)
+	if strings.Join(n.PreviousHostnames, ",") != "irc.old.example.org" || len(problems) != 3 {
+		t.Fatalf("previous %q problems %q", n.PreviousHostnames, problems)
+	}
+	// Capped; an older origin that doesn't send them means none.
+	c.Network.PreviousHostnames = nil
+	for i := 0; i < 15; i++ {
+		c.Network.PreviousHostnames = append(c.Network.PreviousHostnames, "irc"+string(rune('a'+i))+".example.org")
+	}
+	importedPreviousHostnames(n, c.Network)
+	if len(n.PreviousHostnames) != network.MaxPreviousHostnames {
+		t.Fatalf("cap: %d", len(n.PreviousHostnames))
+	}
+	c.Network.PreviousHostnames = nil
+	if importedPreviousHostnames(n, c.Network); n.PreviousHostnames == nil || len(n.PreviousHostnames) != 0 {
+		t.Fatalf("none: %q", n.PreviousHostnames)
+	}
+}

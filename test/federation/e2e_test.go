@@ -93,6 +93,26 @@ func send(t *testing.T, method, u, key, contentType, body string) int {
 	return resp.StatusCode
 }
 
+// keyJSON is a JSON request with a Network key; out gets the body.
+func keyJSON(t *testing.T, method, u, key, body string, out any) int {
+	t.Helper()
+	req, _ := http.NewRequest(method, u, strings.NewReader(body))
+	if body != "" {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	req.Header.Set("Authorization", "Network "+key)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	if out != nil && len(raw) > 0 {
+		_ = json.Unmarshal(raw, out)
+	}
+	return resp.StatusCode
+}
+
 func eventually(t *testing.T, what string, timeout time.Duration, f func() bool) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
@@ -311,6 +331,65 @@ func TestTwoDirectories(t *testing.T) {
 		}
 		return !th.Valid
 	})
+
+	t.Log("move: gamma's owner moves it to a new hostname on A; B follows it as an update of the same listing")
+	w.seed(w.dbA, "net_01E2E00000000000000000000E", "irc.gamma.test")
+	w.publishTXT("irc.gamma.test", "tok-net_01E2E00000000000000000000E-e2e")
+	eventually(t, "gamma verified on B", time.Minute, func() bool {
+		w.syncB(mainID)
+		s, _ := w.onB("irc.gamma.test")
+		return s == "verified"
+	})
+	var gammaB string
+	if err := w.dbB.QueryRow("SELECT id FROM networks WHERE hostname = 'irc.gamma.test'").Scan(&gammaB); err != nil {
+		t.Fatal(err)
+	}
+	const gammaKey = "e2e-stack-network-key-gamma-0123456789"
+	w.exec(w.dbA, "UPDATE networks SET management_key_hash = encode(sha256(convert_to($1, 'UTF8')), 'hex') WHERE hostname = 'irc.gamma.test'", gammaKey)
+	var mv struct {
+		Move struct {
+			Token       string `json:"token"`
+			RecordName  string `json:"record_name"`
+			RecordValue string `json:"record_value"`
+		} `json:"move"`
+	}
+	gammaA := urlA + "/v1/networks/net_01E2E00000000000000000000E"
+	if code := keyJSON(t, "POST", gammaA+"/move", gammaKey, `{"hostname":"irc.boson.gamma.test"}`, &mv); code != 201 ||
+		mv.Move.RecordName != "_boson.irc.boson.gamma.test" || mv.Move.RecordValue != "boson-verify="+mv.Move.Token {
+		t.Fatalf("request move: %d %+v", code, mv)
+	}
+	// No record yet: the check fails and the listing stays where it is.
+	if code := keyJSON(t, "POST", gammaA+"/move/verify", gammaKey, "", nil); code != 409 {
+		t.Fatalf("check without the record: %d", code)
+	}
+	if s, _ := w.onB("irc.gamma.test"); s != "verified" {
+		t.Fatalf("gamma on B during the pending move: %q", s)
+	}
+	// The record appears on real DNS: A's verify worker completes the move.
+	w.publishTXT("irc.boson.gamma.test", mv.Move.Token)
+	eventually(t, "gamma moved on A", time.Minute, func() bool {
+		var h string
+		_ = w.dbA.QueryRow("SELECT hostname FROM networks WHERE id = 'net_01E2E00000000000000000000E'").Scan(&h)
+		return h == "irc.boson.gamma.test"
+	})
+	eventually(t, "gamma moved on B (same row, re-verified)", time.Minute, func() bool {
+		w.syncB(mainID)
+		var id, status string
+		_ = w.dbB.QueryRow("SELECT id, status FROM networks WHERE hostname = 'irc.boson.gamma.test'").Scan(&id, &status)
+		return id == gammaB && status == "verified"
+	})
+	if s, _ := w.onB("irc.gamma.test"); s != "" {
+		t.Fatalf("old hostname still on B: %q", s)
+	}
+	var lk struct {
+		Network struct {
+			ID string `json:"id"`
+		} `json:"network"`
+		MovedFrom string `json:"moved_from"`
+	}
+	if code := call(t, "GET", urlB+"/v1/networks/lookup?hostname=irc.gamma.test", "", "", &lk); code != 200 || lk.Network.ID != gammaB || lk.MovedFrom != "irc.gamma.test" {
+		t.Fatalf("old hostname lookup on B: %d %+v", code, lk)
+	}
 
 	t.Log("B never re-exports imported listings")
 	var feed struct {

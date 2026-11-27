@@ -33,6 +33,11 @@ func (h *Handlers) registerAPI(r *router.Router) {
 	r.Authed("DELETE /v1/networks/{id}", h.writes(h.remove))
 	r.Authed("POST /v1/networks/{id}/verify", h.writes(h.verify))
 	r.Authed("POST /v1/networks/{id}/regenerate-token", h.writes(h.regenerate))
+	// Moving the listing to a new hostname (move.go).
+	r.Authed("GET /v1/networks/{id}/move", h.getMove)
+	r.Authed("POST /v1/networks/{id}/move", h.writes(h.requestMove))
+	r.Authed("POST /v1/networks/{id}/move/verify", h.writes(h.verifyMove))
+	r.Authed("DELETE /v1/networks/{id}/move", h.writes(h.cancelMove))
 	for _, kind := range []networks.ImageKind{networks.ImageIcon, networks.ImageBanner} {
 		r.Authed("PUT /v1/networks/{id}/"+string(kind), h.writes(h.putImage(kind)))
 		r.Authed("DELETE /v1/networks/{id}/"+string(kind), h.writes(h.deleteImage(kind)))
@@ -46,8 +51,12 @@ func (h *Handlers) registerAPI(r *router.Router) {
 
 func (h *Handlers) listing(r *nethttp.Request, n *network.Network) views.Listing {
 	p := principal.From(r.Context())
-	l := views.NewListing(n, h.d.Media, h.d.Networks.CanManage(p, n), h.d.Networks.Options().TokenTTL)
+	manager := h.d.Networks.CanManage(p, n)
+	l := views.NewListing(n, h.d.Media, manager, h.d.Networks.Options().TokenTTL)
 	l.Network.WithOriginName(h.peerNames(r.Context()))
+	if manager && n.IsLocal() {
+		l.Move = h.moveView(h.d.Networks.PendingMoveOf(r.Context(), n))
+	}
 	return l
 }
 
@@ -121,7 +130,7 @@ func (h *Handlers) lookup(w nethttp.ResponseWriter, r *nethttp.Request) {
 		router.WriteError(w, r, apperr.Invalid("hostname is required"))
 		return
 	}
-	n, err := h.d.Networks.Lookup(r.Context(), principal.From(r.Context()), host)
+	n, movedFrom, err := h.d.Networks.Lookup(r.Context(), principal.From(r.Context()), host)
 	if err != nil {
 		router.WriteError(w, r, err)
 		return
@@ -132,7 +141,14 @@ func (h *Handlers) lookup(w nethttp.ResponseWriter, r *nethttp.Request) {
 		router.WriteError(w, r, networks.ErrNotFound)
 		return
 	}
-	router.WriteJSON(w, nethttp.StatusOK, h.listing(r, n))
+	l := h.listing(r, n)
+	if movedFrom != "" {
+		// The listing moved away from the hostname asked for: same answer,
+		// with the hint (and its canonical URL) so clients can follow it.
+		l.MovedFrom = movedFrom
+		w.Header().Set("Content-Location", "/v1/networks/"+n.ID)
+	}
+	router.WriteJSON(w, nethttp.StatusOK, l)
 }
 
 type facetsJSON struct {
@@ -208,8 +224,9 @@ func (h *Handlers) create(w nethttp.ResponseWriter, r *nethttp.Request) {
 	router.WriteJSON(w, status, h.listing(r, res.Network))
 }
 
-// editJSON is PATCH /v1/networks/{id}. hostname/port/tls are fixed once
-// listed and ignored here.
+// editJSON is PATCH /v1/networks/{id}. hostname/port/tls are ignored here:
+// they change through POST /v1/networks/{id}/move (a new hostname needs its
+// own DNS proof).
 type editJSON struct {
 	Name        *string   `json:"name"`
 	Description *string   `json:"description"`

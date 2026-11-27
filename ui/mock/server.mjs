@@ -27,6 +27,7 @@ function reset() {
 		media: new Map(), // key -> {type, body}
 		refresh: new Map(), // refresh token -> username
 		lastVerify: new Map(), // network id -> ms
+		moves: new Map(), // network id -> pending move
 		seq: 1000
 	};
 	for (const p of state.peers)
@@ -119,6 +120,7 @@ const PUBLIC = [
 	'theme',
 	'channels',
 	'autojoin_channels',
+	'previous_hostnames',
 	'status',
 	'origin',
 	'origin_name',
@@ -202,7 +204,24 @@ function listing(n, manage) {
 					...(expiresAt(n) ? { expires_at: expiresAt(n) } : {})
 				}
 			: null;
-	return { network: view(n, manage), verification };
+	const l = { network: view(n, manage), verification };
+	const mv = manage && state.moves.get(n.id);
+	if (mv) l.move = moveView(mv);
+	return l;
+}
+const addr = (h, port, tls) => ({ hostname: h, port, tls });
+/** A pending move as the directory renders it. */
+function moveView(mv) {
+	return {
+		...mv,
+		hostname: mv.to.hostname,
+		port: mv.to.port,
+		tls: mv.to.tls,
+		record_name: '_boson.' + mv.to.hostname,
+		record_value: 'boson-verify=' + mv.token,
+		expires_at: new Date(Date.parse(mv.issued_at) + TTL).toISOString(),
+		expired: Date.now() - Date.parse(mv.issued_at) > TTL
+	};
 }
 
 function audited(action, actor, hostname, meta = null, networkId) {
@@ -417,7 +436,7 @@ async function apiRoutes(req, res, path, url) {
 	}
 
 	let mm = path.match(
-		/^\/v1\/networks\/([^/]+)(?:\/(verify|regenerate-token|icon|banner|theme|theme-images\/[a-z_-]+))?$/
+		/^\/v1\/networks\/([^/]+)(?:\/(verify|regenerate-token|move|move\/verify|icon|banner|theme|theme-images\/[a-z_-]+))?$/
 	);
 	if (mm) {
 		const n = state.networks.find((x) => x.id === decodeURIComponent(mm[1]));
@@ -486,6 +505,101 @@ async function apiRoutes(req, res, path, url) {
 				network: l.network,
 				server: l.network,
 				verification: l.verification,
+				success: !partial,
+				report: { success: !partial, results }
+			});
+		}
+		if (sub === 'move' && m === 'GET') return send(res, 200, { ...listing(n, true), history: [] });
+		if (sub === 'move' && m === 'POST') {
+			const b = await body(req);
+			const host = String(b.hostname ?? '')
+				.trim()
+				.toLowerCase()
+				.replace(/\.$/, '');
+			const port = Number(b.port) || n.port;
+			const tls = b.tls ?? n.tls;
+			if (!['verified', 'lapsed'].includes(n.status))
+				return err(res, 409, 'not_verified', 'only a verified listing can move');
+			if (!host.includes('.')) return err(res, 400, 'invalid_hostname', 'That isn’t a valid hostname.');
+			if (host === n.hostname) {
+				if (port === n.port && tls === n.tls)
+					return err(res, 400, 'invalid_request', 'that is already the listing’s address');
+				n.port = port;
+				n.tls = tls;
+				return send(res, 200, listing(n, true));
+			}
+			if (state.networks.some((x) => x !== n && x.hostname === host))
+				return err(res, 409, 'hostname_taken', 'that hostname is already listed by someone else');
+			const cur = state.moves.get(n.id);
+			if (
+				cur &&
+				cur.to.hostname === host &&
+				cur.to.port === port &&
+				cur.to.tls === tls &&
+				!moveView(cur).expired
+			)
+				return send(res, 200, listing(n, true));
+			const now = new Date().toISOString();
+			state.moves.set(n.id, {
+				id: 'mov_' + state.seq++,
+				status: 'pending',
+				from: addr(n.hostname, n.port, n.tls),
+				to: addr(host, port, tls),
+				token: randomBytes(15).toString('base64url'),
+				requested_at: now,
+				issued_at: now,
+				last_checked_at: null
+			});
+			audited('network.move_request', me.username, n.hostname, { to: host }, n.id);
+			return send(res, 201, listing(n, true));
+		}
+		if (sub === 'move' && m === 'DELETE') {
+			state.moves.delete(n.id);
+			return send(res, 200, listing(n, true));
+		}
+		if (sub === 'move/verify' && m === 'POST') {
+			const mv = state.moves.get(n.id);
+			if (!mv) return err(res, 404, 'no_pending_move', 'this listing has no pending move');
+			if (moveView(mv).expired)
+				return err(res, 410, 'token_expired', 'the move’s record expired; request it again');
+			const key = 'move:' + n.id;
+			if (Date.now() - (state.lastVerify.get(key) ?? 0) < 3000)
+				return err(res, 429, 'rate_limited', 'too many verification attempts', { 'Retry-After': '30' });
+			state.lastVerify.set(key, Date.now());
+			mv.last_checked_at = new Date().toISOString();
+			const rec = [`boson-verify=${mv.token}`];
+			// A new hostname with "newplace" in it is seen by one resolver only.
+			const partial = mv.to.hostname.includes('newplace');
+			const results = partial
+				? {
+						cloudflare: { outcome: 'match', records: rec },
+						google: { outcome: 'missing_record', detail: 'no TXT records at _boson.' + mv.to.hostname },
+						quad9: { outcome: 'missing_record', detail: 'no TXT records at _boson.' + mv.to.hostname }
+					}
+				: {
+						cloudflare: { outcome: 'match', records: rec },
+						google: { outcome: 'match', records: rec },
+						quad9: { outcome: 'match', records: rec }
+					};
+			if (!partial) {
+				n.previous_hostnames = [
+					n.hostname,
+					...(n.previous_hostnames ?? []).filter((h) => h !== mv.to.hostname)
+				];
+				Object.assign(n, mv.to);
+				n.verification_token = mv.token;
+				n.token_issued_at = mv.issued_at;
+				n.status = 'verified';
+				n.last_verified_at = n.last_checked_at = mv.last_checked_at;
+				state.moves.delete(n.id);
+				audited('network.move', me.username, mv.from.hostname, { to: mv.to.hostname }, n.id);
+			}
+			const l = listing(n, true);
+			return send(res, partial ? 409 : 200, {
+				network: l.network,
+				verification: l.verification,
+				move: l.move ?? null,
+				moved: !partial,
 				success: !partial,
 				report: { success: !partial, results }
 			});

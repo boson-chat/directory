@@ -17,6 +17,7 @@ network's `_boson.<hostname>` TXT record itself.
       "website_url": "https://…", "auth_url": "https://…", "icon_url": "https://…", "banner_url": "https://…",
       "theme": {"version": 1, "base": "dark", "colors": {"accent": "#7c3aed"}, "logo": "https://…"},
       "channels": ["#lobby", "#help"], "autojoin_channels": ["#lobby"],
+      "previous_hostnames": ["irc.old.example.org"],
       "created_at": "…", "updated_at": "…"},
      "verification_token": "…", "deleted": false},
     {"seq": 42, "network": {"id": "net_…"}, "deleted": true}
@@ -44,8 +45,31 @@ network's `_boson.<hostname>` TXT record itself.
   with the owner-write rules (≤ 50, `#` + 1–63 printable ASCII, no space or
   comma, de-duplicated ignoring case); a missing list means none and an
   invalid list is dropped without rejecting the listing.
+- `previous_hostnames` (hostnames the listing moved away from, most recent
+  first, at most 10) is omitted when it never moved. Importers keep the valid
+  ones (normalised, not the current hostname) and drop the rest; see Moves.
 - Readers ignore fields they don't know, so new listing fields can be added
   without breaking older peers.
+
+### Moves
+
+A listing moved to a new hostname (`POST /v1/networks/{id}/move`, README) is
+exported as an **update of the same id**, never as a delete + create:
+
+- While the move is pending nothing is exported (the move lives in
+  `network_moves`; the row and its `seq` don't change), so an unverified
+  hostname never leaks.
+- When it completes, the row's `seq` moves and the next page carries it with
+  the new `hostname`/`port`/`tls`, the new `verification_token` (the record at
+  the new hostname) and the old hostname in `previous_hostnames`.
+- An importer upserts by origin id, so its row (and its local id) stays; the
+  new token sends it back to `pending` and the sync checks the new hostname's
+  record right away (lenient, like any import), so it reappears as soon as this
+  directory's own DNS check passes. Conflict and block rules apply to the new
+  hostname as to any import. Importers store `previous_hostnames`, so
+  `GET /v1/networks/lookup?hostname=<old>` follows the move on peers too.
+- No feed version bump: directories from before this field already follow a
+  hostname change by origin id (they just don't keep `previous_hostnames`).
 
 ## Peers (operator API, `directory.manage`)
 

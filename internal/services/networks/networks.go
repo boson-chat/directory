@@ -113,8 +113,9 @@ type NetworkServiceImpl interface {
 	List(ctx context.Context, p *principal.Principal, q ListQuery) (*Page, error)
 	// Get returns a verified listing, or any listing p may manage.
 	Get(ctx context.Context, p *principal.Principal, id string) (*network.Network, error)
-	// Lookup is Get by hostname.
-	Lookup(ctx context.Context, p *principal.Principal, hostname string) (*network.Network, error)
+	// Lookup is Get by hostname. A hostname a listing was moved away from
+	// resolves to it, with movedFrom set to that old hostname.
+	Lookup(ctx context.Context, p *principal.Principal, hostname string) (n *network.Network, movedFrom string, err error)
 	Facets(ctx context.Context, includeNSFW bool) (tags, languages []network.Facet, err error)
 
 	// Owner (p is an account or a Network key; operators may manage any
@@ -150,6 +151,23 @@ type NetworkServiceImpl interface {
 	VerifyDue(ctx context.Context) (int, error)
 	// Options exposes the verification timings (TXT expiry for the UI).
 	Options() Options
+
+	// Moving a listing to a new hostname (move.go). All need a manager of
+	// a local listing (owner account, its Network key, or an operator).
+	// GetMove returns the pending move and the move history.
+	GetMove(ctx context.Context, p *principal.Principal, id string) (*MoveState, error)
+	// RequestMove starts a move to a new hostname (pending until its TXT
+	// record verifies), or applies a port/tls change on the same hostname.
+	RequestMove(ctx context.Context, p *principal.Principal, id string, r MoveRequest) (*MoveState, error)
+	// CheckMove checks the new hostname's TXT record and moves the listing
+	// when all three resolvers see it.
+	CheckMove(ctx context.Context, p *principal.Principal, id string) (*MoveOutcome, error)
+	// CancelMove drops the pending move (no-op without one).
+	CancelMove(ctx context.Context, p *principal.Principal, id string) (*MoveState, error)
+	// PendingMoveOf returns n's pending move, nil if none.
+	PendingMoveOf(ctx context.Context, n *network.Network) *network.Move
+	// MoveExpired reports whether m's token is past the token TTL.
+	MoveExpired(m *network.Move) bool
 }
 
 // ModerationAction is an operator action on one listing.

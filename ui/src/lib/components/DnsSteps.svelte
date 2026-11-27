@@ -8,6 +8,7 @@
 	import CopyField from './CopyField.svelte';
 	import Confirm from './Confirm.svelte';
 	import Notice from './Notice.svelte';
+	import ResolverReport from './ResolverReport.svelte';
 
 	/** The TXT record to publish and the check against three public resolvers. */
 	let { listing = $bindable() }: { listing: Listing } = $props();
@@ -86,20 +87,6 @@
 		}
 	}
 
-	const resolverNames: Record<string, string> = {
-		cloudflare: 'Cloudflare 1.1.1.1',
-		google: 'Google 8.8.8.8',
-		quad9: 'Quad9 9.9.9.9'
-	};
-	const outcome: Record<string, string> = {
-		match: 'Sees the record',
-		missing_record: 'No record yet',
-		timeout: 'Timed out',
-		error: 'Lookup failed'
-	};
-	let matched = $derived(
-		report ? Object.values(report.results).filter((r) => r.outcome === 'match').length : 0
-	);
 	let sub = $derived(network.hostname.split('.').slice(0, -2).join('.'));
 </script>
 
@@ -159,28 +146,11 @@
 			<Notice tone={problem.kind === 'expired' ? 'warn' : 'bad'}>{problem.text}</Notice>
 		{/if}
 		{#if report}
-			<div class="report" aria-live="polite">
-				<p class="summary" class:ok={report.success}>
-					{report.success
-						? 'All three resolvers see the record. The listing is live.'
-						: `${matched} of 3 resolvers see the record.`}
-				</p>
-				<ul class="resolvers">
-					{#each Object.entries(report.results) as [k, r] (k)}
-						<li data-o={r.outcome}>
-							<span class="rname">{resolverNames[k] ?? k}</span>
-							<span class="rout">{outcome[r.outcome] ?? r.outcome}</span>
-							{#if r.detail}<span class="muted rdet">{r.detail}</span>{/if}
-						</li>
-					{/each}
-				</ul>
-				{#if !report.success}
-					<p class="muted small">
-						DNS changes can take a few minutes to reach every resolver. The directory also checks pending
-						listings daily on its own.
-					</p>
-				{/if}
-			</div>
+			<ResolverReport
+				{report}
+				okText="All three resolvers see the record. The listing is live."
+				hint="DNS changes can take a few minutes to reach every resolver. The directory also checks pending listings daily on its own."
+			/>
 		{/if}
 	</li>
 </ol>
@@ -247,13 +217,6 @@
 		font-size: var(--text-xs);
 		line-height: 1.6;
 	}
-	.steps p.summary {
-		font-family: var(--font-mono);
-		color: var(--warn-text);
-	}
-	.steps p.summary.ok {
-		color: var(--success-text);
-	}
 	.rec {
 		display: grid;
 		grid-template-columns: minmax(0, 1.2fr) auto minmax(0, 1.6fr);
@@ -288,63 +251,6 @@
 		display: flex;
 		gap: var(--space-2);
 		flex-wrap: wrap;
-	}
-	.report {
-		display: grid;
-		gap: var(--space-2);
-	}
-	.resolvers {
-		list-style: none;
-		margin: 0;
-		padding: 0;
-		border: 1px solid var(--border);
-		border-radius: var(--radius-sm);
-		background: var(--surface);
-	}
-	.resolvers li {
-		display: flex;
-		flex-wrap: wrap;
-		gap: var(--space-1) var(--space-4);
-		align-items: center;
-		padding: var(--space-2) var(--space-4);
-		border-bottom: 1px solid var(--border-soft);
-		font-family: var(--font-mono);
-		font-size: var(--text-sm);
-	}
-	.resolvers li:last-child {
-		border-bottom: 0;
-	}
-	.rname {
-		min-width: 18ch;
-	}
-	.rout {
-		display: inline-flex;
-		align-items: center;
-		gap: 6px;
-		color: var(--danger-text);
-	}
-	.rout::before {
-		content: '';
-		width: 6px;
-		height: 6px;
-		border-radius: 50%;
-		background: var(--danger);
-	}
-	[data-o='match'] .rout {
-		color: var(--success-text);
-	}
-	[data-o='match'] .rout::before {
-		background: var(--success);
-	}
-	[data-o='timeout'] .rout {
-		color: var(--warn-text);
-	}
-	[data-o='timeout'] .rout::before {
-		background: var(--warn);
-	}
-	.rdet {
-		font-size: var(--text-xs);
-		overflow-wrap: anywhere;
 	}
 	@media (max-width: 640px) {
 		.rec {

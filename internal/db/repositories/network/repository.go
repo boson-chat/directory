@@ -50,6 +50,9 @@ func (r *NetworkRepository) Create(ctx context.Context, n *Network) error {
 	if n.AutojoinChannels == nil {
 		n.AutojoinChannels = []string{}
 	}
+	if n.PreviousHostnames == nil {
+		n.PreviousHostnames = []string{}
+	}
 	if n.Origin == "" {
 		n.Origin = OriginLocal
 	}
@@ -346,7 +349,11 @@ func (r *NetworkRepository) RecordHealth(ctx context.Context, h HealthResult) er
 		upd["user_count"] = *h.UserCount
 		upd["user_count_at"] = h.CheckedAt
 	}
-	return r.db.Conn(ctx).Model(&Network{}).Where("id = ?", h.ID).Updates(upd).Error
+	q := r.db.Conn(ctx).Model(&Network{}).Where("id = ?", h.ID)
+	if h.Hostname != "" {
+		q = q.Where("hostname = ?", h.Hostname)
+	}
+	return q.Updates(upd).Error
 }
 
 // patternWhere is the SQL match for a block pattern.
@@ -392,7 +399,7 @@ func (r *NetworkRepository) UnblockMatching(ctx context.Context, pattern string,
 // upsertColumns are the public fields a peer import may set.
 var upsertColumns = []string{"hostname", "port", "tls", "name", "description", "tags", "languages", "is_nsfw",
 	"website_url", "auth_url", "icon_key", "banner_key", "theme",
-	"channels", "autojoin_channels"}
+	"channels", "autojoin_channels", "previous_hostnames"}
 
 func (r *NetworkRepository) UpsertByOrigin(ctx context.Context, n *Network) (UpsertResult, error) {
 	if n.Origin == "" || n.Origin == OriginLocal || n.OriginID == nil || *n.OriginID == "" {
@@ -437,6 +444,9 @@ func (r *NetworkRepository) UpsertByOrigin(ctx context.Context, n *Network) (Ups
 			}
 			if n.AutojoinChannels == nil {
 				n.AutojoinChannels = []string{}
+			}
+			if n.PreviousHostnames == nil {
+				n.PreviousHostnames = []string{}
 			}
 			before := cur.Seq
 			if err := r.db.Conn(ctx).Model(&Network{ID: cur.ID}).Select(cols).Updates(n).Error; err != nil {

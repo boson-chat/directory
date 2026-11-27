@@ -993,6 +993,9 @@ func (s *FederationService) apply(ctx context.Context, origin string, c FeedChan
 	for _, p := range importedChannels(n, c.Network) {
 		res.problem(trunc(id) + ": " + p)
 	}
+	for _, p := range importedPreviousHostnames(n, c.Network) {
+		res.problem(trunc(id) + ": " + p)
+	}
 	if seen != nil {
 		seen[id] = true
 	}

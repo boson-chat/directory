@@ -218,19 +218,25 @@ func (s *NetworkService) Get(ctx context.Context, p *principal.Principal, id str
 	return n, nil
 }
 
-func (s *NetworkService) Lookup(ctx context.Context, p *principal.Principal, host string) (*network.Network, error) {
+// Lookup finds a listing by hostname. A hostname that no visible listing
+// has now, but that a listing was moved away from, resolves to that
+// listing; movedFrom is then the hostname asked for.
+func (s *NetworkService) Lookup(ctx context.Context, p *principal.Principal, host string) (n *network.Network, movedFrom string, err error) {
 	h, err := hostname.Normalize(host)
 	if err != nil {
-		return nil, apperr.New(400, "invalid_hostname", err.Error())
+		return nil, "", apperr.New(400, "invalid_hostname", err.Error())
 	}
-	n, err := s.repo.GetByHostname(ctx, h)
-	if err != nil {
-		return nil, mapRepo(err)
+	n, err = s.repo.GetByHostname(ctx, h)
+	switch {
+	case err == nil && s.visible(p, n):
+		return n, "", nil
+	case err != nil && !errors.Is(err, network.ErrNotFound):
+		return nil, "", err
 	}
-	if !s.visible(p, n) {
-		return nil, ErrNotFound
+	if n, err = s.lookupMoved(ctx, p, h); err != nil {
+		return nil, "", mapRepo(err)
 	}
-	return n, nil
+	return n, h, nil
 }
 
 func (s *NetworkService) Facets(ctx context.Context, includeNSFW bool) ([]network.Facet, []network.Facet, error) {
@@ -861,7 +867,7 @@ func (s *NetworkService) VerifyDue(ctx context.Context) (int, error) {
 			return checked, err
 		}
 		if len(due) == 0 {
-			return checked, nil
+			break
 		}
 		progressed := 0
 		for _, n := range due {
@@ -880,10 +886,11 @@ func (s *NetworkService) VerifyDue(ctx context.Context) (int, error) {
 			progressed++
 		}
 		if progressed == 0 {
-			return checked, nil
+			break
 		}
 	}
-	return checked, nil
+	moves, err := s.MovesDue(ctx)
+	return checked + moves, err
 }
 
 func (s *NetworkService) Moderate(ctx context.Context, p *principal.Principal, id string, action ModerationAction, reason string) (*network.Network, *dnsverify.Report, error) {
