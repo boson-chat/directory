@@ -82,3 +82,17 @@ export async function dropFiles(target: Locator, files: DropFile[]) {
 	const dataTransfer = await dragOver(target, files);
 	await target.dispatchEvent('drop', { dataTransfer });
 }
+
+/** With SCREENSHOTS=<dir>, saves one element (a section deep in a long page) in dark and light. */
+export async function shootElement(el: Locator, info: TestInfo, name: string) {
+	const dir = env.SCREENSHOTS;
+	if (!dir) return;
+	mkdirSync(dir, { recursive: true });
+	const page = el.page();
+	for (const scheme of ['dark', 'light'] as const) {
+		await page.emulateMedia({ colorScheme: scheme, reducedMotion: 'reduce' });
+		await page.waitForTimeout(120);
+		await el.screenshot({ path: join(dir, `${name}-${info.project.name}-${scheme}.png`) });
+	}
+	await page.emulateMedia({ colorScheme: 'dark' });
+}

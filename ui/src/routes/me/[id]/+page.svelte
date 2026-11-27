@@ -12,6 +12,7 @@
 	import NetworkIcon from '$lib/components/NetworkIcon.svelte';
 	import NetworkForm from '$lib/components/NetworkForm.svelte';
 	import DnsSteps from '$lib/components/DnsSteps.svelte';
+	import MoveHost from '$lib/components/MoveHost.svelte';
 	import ImageField from '$lib/components/ImageField.svelte';
 	import ThemeEditor from '$lib/components/ThemeEditor.svelte';
 	import Confirm from '$lib/components/Confirm.svelte';
@@ -171,12 +172,29 @@
 		<section class="section" aria-labelledby="form-h">
 			<div class="section-head">
 				<h2 id="form-h">Listing details</h2>
-				<p>The address can’t change; list the new one and delete this listing instead.</p>
+				<p>To change its address, move the listing to a new hostname below.</p>
 			</div>
 			{#key formKey}
 				<NetworkForm mode="edit" initial={n} submitLabel="Save changes" onsubmit={save} />
 			{/key}
 		</section>
+
+		{#if n.status === 'verified' || n.status === 'lapsed'}
+			<section class="section" aria-labelledby="move-h">
+				<div class="section-head">
+					<h2 id="move-h">
+						{listing.move ? `Moving to ${listing.move.hostname}` : 'Move to a new hostname'}
+					</h2>
+					<p>
+						Changed the address people connect to, or put Boson in front of your server? Move the listing and
+						keep its page, history, stats and channels.
+					</p>
+				</div>
+				{#key n.id}
+					<MoveHost bind:listing />
+				{/key}
+			</section>
+		{/if}
 	{/if}
 
 	<section class="section danger" aria-labelledby="del-h">

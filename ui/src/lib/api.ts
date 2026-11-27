@@ -8,6 +8,8 @@ import type {
 	Block,
 	Facets,
 	Listing,
+	Move,
+	MoveVerifyResponse,
 	Network,
 	NetworkInput,
 	NetworkPage,
@@ -151,6 +153,14 @@ export const directory = {
 		call<VerifyResponse>('POST', `/v1/networks/${id(netId)}/verify`, { authed: true }),
 	regenerate: (netId: string) =>
 		call<Listing>('POST', `/v1/networks/${id(netId)}/regenerate-token`, { authed: true }),
+	/** Move to a new hostname (pending until its TXT record verifies); same hostname changes port/tls at once. */
+	requestMove: (netId: string, to: { hostname: string; port?: number; tls?: boolean }) =>
+		call<Listing>('POST', `/v1/networks/${id(netId)}/move`, { body: to, authed: true }),
+	verifyMove: (netId: string) =>
+		call<MoveVerifyResponse>('POST', `/v1/networks/${id(netId)}/move/verify`, { authed: true }),
+	cancelMove: (netId: string) => call<Listing>('DELETE', `/v1/networks/${id(netId)}/move`, { authed: true }),
+	moveHistory: (netId: string) =>
+		call<Listing & { history: Move[] }>('GET', `/v1/networks/${id(netId)}/move`, { authed: true }),
 	putImage: (netId: string, which: 'icon' | 'banner', file: Blob) =>
 		call<Listing>('PUT', `/v1/networks/${id(netId)}/${which}`, { blob: file, authed: true }),
 	deleteImage: (netId: string, which: 'icon' | 'banner') =>

@@ -30,6 +30,8 @@ export interface Network {
 	channels?: string[];
 	/** The channels new users are joined to ("Joins #lobby"); [] when none. */
 	autojoin_channels?: string[];
+	/** Hostnames the listing was moved away from, most recent first. Older directories omit it. */
+	previous_hostnames?: string[];
 	status: NetworkStatus;
 	/** Same as `status`, for clients written against /servers. */
 	verification_status?: NetworkStatus;
@@ -71,6 +73,48 @@ export interface Verification {
 export interface Listing {
 	network: Network;
 	verification: Verification | null;
+	/** The pending move to a new hostname (managers only; absent when there is none). */
+	move?: Move | null;
+	/** Set by a lookup by a hostname the listing moved away from. */
+	moved_from?: string;
+}
+
+export interface Address {
+	hostname: string;
+	port: number;
+	tls: boolean;
+}
+
+/** A request to move a listing to a new address. The listing keeps its old one until the record verifies. */
+export interface Move {
+	id: string;
+	status: 'pending' | 'completed' | 'cancelled' | 'expired';
+	from: Address;
+	to: Address;
+	hostname: string;
+	port: number;
+	tls: boolean;
+	requested_at: string;
+	ended_at?: string | null;
+	/** Pending moves only: the record to publish at the new hostname. */
+	record_name?: string;
+	record_value?: string;
+	token?: string;
+	issued_at?: string;
+	expires_at?: string;
+	last_checked_at?: string | null;
+	/** Past its 72 h: no longer checked. Request again for a new record, or cancel. */
+	expired: boolean;
+}
+
+/** POST /v1/networks/{id}/move/verify: 200 once moved, 409 with the report while not every resolver sees it. */
+export interface MoveVerifyResponse {
+	network: Network;
+	verification: Verification | null;
+	move: Move | null;
+	moved: boolean;
+	success: boolean;
+	report: VerifyReport;
 }
 
 export interface NetworkPage {
