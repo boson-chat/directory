@@ -204,7 +204,7 @@ func (c *Checker) RunDue(ctx context.Context) (int, error) {
 			want := c.UserCount && (n.UserCountAt == nil || now().Sub(*n.UserCountAt) >= c.UserCountEvery)
 			r := c.Prober.Probe(ctx, n, want)
 			m.HealthProbe(ctx, r.Status)
-			if err := c.Repo.RecordHealth(ctx, network.HealthResult{ID: n.ID, Status: r.Status, CheckedAt: now().UTC(), UserCount: r.UserCount}); err != nil {
+			if err := c.Repo.RecordHealth(ctx, network.HealthResult{ID: n.ID, Hostname: n.Hostname, Status: r.Status, CheckedAt: now().UTC(), UserCount: r.UserCount}); err != nil {
 				logger.FromCtx(ctx).Warn().Err(err).Str("hostname", n.Hostname).Msg("recording health")
 			}
 		}(n)

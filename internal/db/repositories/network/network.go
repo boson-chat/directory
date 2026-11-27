@@ -61,8 +61,11 @@ type Network struct {
 	Theme JSONB `gorm:"type:jsonb"`
 	// Channels are the network's fixed channels and AutojoinChannels the
 	// ones new users join (names as written; never NULL).
-	Channels          pq.StringArray `gorm:"type:text[]"`
-	AutojoinChannels  pq.StringArray `gorm:"type:text[]"`
+	Channels         pq.StringArray `gorm:"type:text[]"`
+	AutojoinChannels pq.StringArray `gorm:"type:text[]"`
+	// PreviousHostnames are the hostnames the listing was moved away from,
+	// most recent first (never NULL).
+	PreviousHostnames pq.StringArray `gorm:"type:text[]"`
 	OwnerAuthUserID   *string
 	ManagementKeyHash *string
 	Origin            string
@@ -228,6 +231,9 @@ type HealthResult struct {
 	CheckedAt time.Time
 	// UserCount is set when LUSERS was read.
 	UserCount *int
+	// Hostname, when set, must still be the listing's hostname, else
+	// nothing is written (it moved while the probe ran).
+	Hostname string
 }
 
 type NetworkRepositoryImpl interface {
@@ -282,4 +288,35 @@ type NetworkRepositoryImpl interface {
 	// Changes returns networks and tombstones with seq > since, in seq
 	// order, at most limit.
 	Changes(ctx context.Context, since int64, limit int) ([]Change, error)
+
+	// Moves (network_moves).
+	// PendingMove returns the listing's pending move, ErrNoMove if none.
+	PendingMove(ctx context.Context, networkID string) (*Move, error)
+	// Moves returns the listing's move requests, newest first.
+	Moves(ctx context.Context, networkID string, limit int) ([]*Move, error)
+	// ReplaceMove inserts m as the listing's pending move, ending the
+	// current pending one (if any) with the status endPrevious returns
+	// (cancelled when endPrevious is nil).
+	ReplaceMove(ctx context.Context, m *Move, endPrevious func(*Move) string) error
+	// EndMove sets a pending move's final status; false if it wasn't pending.
+	EndMove(ctx context.Context, id, status string, at time.Time) (bool, error)
+	// RecordMoveCheck stamps last_checked_at on a pending move.
+	RecordMoveCheck(ctx context.Context, id string, at time.Time) error
+	// DueMoves returns pending moves whose token is younger than ttl and
+	// that weren't checked within every.
+	DueMoves(ctx context.Context, now time.Time, every, ttl time.Duration, limit int) ([]*Move, error)
+	// ExpireMoves closes pending moves whose token was issued before
+	// issuedBefore (status expired).
+	ExpireMoves(ctx context.Context, issuedBefore, at time.Time) (int64, error)
+	// CompleteMove atomically switches the move's listing to its target
+	// (hostname, port, tls, the move's token, verified now, previous
+	// hostnames) and marks the move completed. It returns the moved listing
+	// and the listing it deleted to make room (nil if none). ErrNoMove if
+	// the move isn't pending with that token any more, ErrMoveStale if the
+	// listing was blocked or changed hostname, ErrHostnameTaken if another
+	// listing holds the target and isn't Replaceable.
+	CompleteMove(ctx context.Context, c MoveCompletion) (moved, replaced *Network, err error)
+	// GetByPreviousHostname returns listings that were moved away from
+	// hostname, verified and local first, most recently changed first.
+	GetByPreviousHostname(ctx context.Context, hostname string) ([]*Network, error)
 }

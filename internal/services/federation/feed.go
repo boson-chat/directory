@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -46,10 +47,16 @@ type FeedNetwork struct {
 	Theme json.RawMessage `json:"theme,omitempty"`
 	// Channels / AutojoinChannels: the network's fixed and auto-join
 	// channels. Omitted when empty; a peer that doesn't send them means none.
-	Channels         []string   `json:"channels,omitempty"`
-	AutojoinChannels []string   `json:"autojoin_channels,omitempty"`
-	CreatedAt        *time.Time `json:"created_at,omitempty"`
-	UpdatedAt        *time.Time `json:"updated_at,omitempty"`
+	Channels         []string `json:"channels,omitempty"`
+	AutojoinChannels []string `json:"autojoin_channels,omitempty"`
+	// PreviousHostnames: the hostnames the listing was moved away from,
+	// most recent first. Omitted when it never moved. A move is an update
+	// of the same id with a new hostname (and a new token), never a
+	// delete + create; older readers that don't know this field still
+	// follow it by id.
+	PreviousHostnames []string   `json:"previous_hostnames,omitempty"`
+	CreatedAt         *time.Time `json:"created_at,omitempty"`
+	UpdatedAt         *time.Time `json:"updated_at,omitempty"`
 }
 
 // FeedChange is one entry of the feed. A deleted entry carries only the
@@ -120,7 +127,8 @@ func buildFeed(changes []network.Change, since int64, limit int, mediaURL func(s
 					IconURL: mediaURLPtr(n.IconKey, mediaURL), BannerURL: mediaURLPtr(n.BannerKey, mediaURL),
 					Theme:    th,
 					Channels: n.Channels, AutojoinChannels: n.AutojoinChannels,
-					CreatedAt: &created, UpdatedAt: &updated,
+					PreviousHostnames: n.PreviousHostnames,
+					CreatedAt:         &created, UpdatedAt: &updated,
 				},
 			})
 		}
@@ -246,6 +254,30 @@ func importedChannels(n *network.Network, fn FeedNetwork) []string {
 	if n.AutojoinChannels, err = networks.CleanChannels(fn.AutojoinChannels, "autojoin_channels"); err != nil {
 		n.AutojoinChannels, problems = []string{}, append(problems, "autojoin_channels dropped: "+err.Error())
 	}
+	return problems
+}
+
+// importedPreviousHostnames keeps the valid, normalised previous hostnames
+// of a feed entry (not the current one, no duplicates, at most
+// network.MaxPreviousHostnames). Bad entries are dropped, not the listing.
+func importedPreviousHostnames(n *network.Network, fn FeedNetwork) []string {
+	var problems []string
+	out := make([]string, 0, len(fn.PreviousHostnames))
+	for _, h := range fn.PreviousHostnames {
+		norm, err := hostname.Normalize(h)
+		if err != nil || norm != h {
+			problems = append(problems, "previous hostname dropped: "+trunc(h))
+			continue
+		}
+		if norm == n.Hostname || slices.Contains(out, norm) {
+			continue
+		}
+		if len(out) == network.MaxPreviousHostnames {
+			break
+		}
+		out = append(out, norm)
+	}
+	n.PreviousHostnames = out
 	return problems
 }
 

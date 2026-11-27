@@ -24,7 +24,8 @@ file](#stack-config-file) (`BOSON_CONFIG`) those settings and the peer list come
 
 JSON everywhere. Errors are `{"error": code, "message": text, "code": code}` (codes include
 `invalid_request`, `invalid_hostname`, `invalid_cursor`, `unauthenticated`, `forbidden`, `not_owner`,
-`not_found`, `not_local`, `hostname_taken`, `blocked`, `token_expired`, `rate_limited`).
+`not_found`, `not_local`, `hostname_taken`, `blocked`, `token_expired`, `rate_limited`, `not_verified`,
+`no_pending_move`, `move_stale`).
 GETs are CORS `*`.
 
 ### Network JSON
@@ -36,6 +37,7 @@ GETs are CORS `*`.
   "website_url": "https://example.org", "auth_url": null, "icon_url": "…", "banner_url": "…",
   "theme": {"version": 1, "base": "dark", "colors": {"accent": "#7c3aed"}, "logo": "https://…"} | null,
   "channels": ["#lobby", "#help"], "autojoin_channels": ["#lobby"],
+  "previous_hostnames": ["irc.old.example.org"],
   "status": "verified", "verification_status": "verified",
   "last_verified_at": "…", "last_checked_at": "…",
   "health_status": "up", "health_checked_at": "…", "user_count": 42, "user_count_at": "…",
@@ -51,8 +53,11 @@ GETs are CORS `*`.
 omitted when empty. `owner`, `verification_token`, `token_issued_at` and `token_expires_at`
 (issued + 72 h) only appear for whoever may manage the listing (`owner` also in operator/owner lists).
 
-A **Listing** is `{"network": Network, "verification": Verification | null}`; `verification` is only
-set for the listing's managers:
+A **Listing** is `{"network": Network, "verification": Verification | null, "move"?: Move,
+"moved_from"?: string}`; `verification` and `move` (the pending [move to a new
+hostname](#moving-a-listing-to-a-new-hostname)) are only set for the listing's managers, `moved_from` only by
+a lookup by an old hostname. `previous_hostnames` (always present, `[]` when it never moved) lists the
+hostnames the listing moved away from, most recent first:
 
 ```json
 {"record_name": "_boson.irc.example.org", "record_value": "boson-verify=<token>", "token": "<token>",
@@ -65,7 +70,7 @@ set for the listing's managers:
 |---|---|
 | `GET /v1/networks` | `q` (prefix search over name, hostname, description), `lang`, `tag`, `nsfw=true`, `source=all\|local\|<peer id>\|peer:<id>`, `sort=users\|active\|newest\|name` (default users), `limit` 1–100 (default 25, larger is clamped), `cursor`. → `{"networks": [Network], "next_cursor": string\|null, "total_estimate": n}`. Verified only; NSFW only with `nsfw=true`. The cursor is opaque, keyset, bound to its sort (400 `invalid_cursor` otherwise) and stable under inserts. `owner=<auth user id>` lists that account's listings in every status (needs `users.view`, `directory.manage`, the internal token, or being that account). |
 | `GET /v1/networks/{id}` | Listing. Verified only, unless you manage it (404 otherwise). `{id}` may also be a listing's legacy id (the uuid it had on the boson API directory; imported rows show it as `legacy_id`). |
-| `GET /v1/networks/lookup?hostname=` | Listing by hostname (normalised). Same visibility. With a Network key: only that key's own listing (any status), else 404. |
+| `GET /v1/networks/lookup?hostname=` | Listing by hostname (normalised). Same visibility. With a Network key: only that key's own listing (any status), else 404. A hostname no visible listing has now, but that a listing [moved away from](#moving-a-listing-to-a-new-hostname), returns that listing (200, its current hostname) with `"moved_from": "<the hostname asked for>"` and `Content-Location: /v1/networks/{id}`. |
 | `GET /v1/facets?nsfw=` | `{"tags": [{"value","count"}], "languages": [...], "sources": [{"id","name","url","count"}]}` over verified listings. `sources` is `local` plus each peer; `id` works as `?source=`. |
 | `GET /.well-known/boson-directory.json` | `{"name","api","version","operator","contact","auth","federation":true}`; name/operator/contact are the current runtime settings |
 
@@ -80,7 +85,7 @@ only deleted or moderated by operators. Writes are rate limited per IP (429 `rat
 |---|---|
 | `GET /v1/me/networks` | `{"listings": [Listing]}` (account or key) |
 | `POST /v1/networks` | body `{hostname, port, tls?=true, name, description?, tags?, languages?, is_nsfw?, website_url?, auth_url?, channels?, autojoin_channels?}` → 201 Listing (status `pending`). The same owner (account or key) registering the same hostname again → 200 with the existing listing. 409 `hostname_taken`, 403 `blocked`, 400 `invalid_request`. A pending local listing whose token expired doesn't hold its hostname; a local registration replaces an imported listing. |
-| `PATCH /v1/networks/{id}` | `{name?, description?, tags?, languages?, is_nsfw?, website_url?, auth_url?, channels?, autojoin_channels?}` → Listing. Hostname/port/tls are fixed (ignored). An empty `name` means unchanged. A list replaces the stored one (`[]` clears it; absent or `null` keeps it). 400 `invalid_channels` / `invalid_autojoin_channels` (see [Network channels](#network-channels)). |
+| `PATCH /v1/networks/{id}` | `{name?, description?, tags?, languages?, is_nsfw?, website_url?, auth_url?, channels?, autojoin_channels?}` → Listing. Hostname/port/tls are ignored here (see `/move`). An empty `name` means unchanged. A list replaces the stored one (`[]` clears it; absent or `null` keeps it). 400 `invalid_channels` / `invalid_autojoin_channels` (see [Network channels](#network-channels)). |
 | `DELETE /v1/networks/{id}` | 204 |
 | `POST /v1/networks/{id}/verify` | 200 / 409 `{"network", "server" (same), "verification", "success", "report": {"success", "results": {"cloudflare"\|"google"\|"quad9": {"outcome": "match\|missing_record\|timeout\|error", "detail"?, "records"?}}}}`. 410 `token_expired` (pending > 72 h: regenerate), 429 `rate_limited` + `Retry-After` (1 per 30 s per network), 403 `blocked`. |
 | `POST /v1/networks/{id}/regenerate-token` | Listing (back to `pending`, new token, new 72 h window) |
@@ -90,8 +95,71 @@ only deleted or moderated by operators. Writes are rate limited per IP (429 `rat
 | `DELETE /v1/networks/{id}/theme` | Listing (theme `null`, uploaded theme images removed) |
 | `PUT /v1/networks/{id}/theme-images/{slot}` | slot `logo` · `logo_wide` · `login_background` · `pane-servers` · `pane-channels` · `pane-messages` · `pane-members`; raw image body or multipart (PNG/JPEG/GIF/WebP/SVG, ≤2 MB, ≤4096 px a side; not cropped) → Listing with the URL in `theme`. 413 `image_too_large`, 400 `unsupported_image`, 400 `unsafe_svg`, 404 `unknown_slot`. |
 | `DELETE /v1/networks/{id}/theme-images/{slot}` | Listing |
+| `GET /v1/networks/{id}/move` | Listing + `"history": [Move]` (newest first, at most 20) |
+| `POST /v1/networks/{id}/move` | `{hostname, port?, tls?}` (port/tls default to the current ones) → 201 Listing with the pending `move`. See [below](#moving-a-listing-to-a-new-hostname). |
+| `POST /v1/networks/{id}/move/verify` | 200 `{network, verification, move: null, moved: true, success, report}` once moved; 409 same body with `moved: false`, the pending `move` and the per-resolver `report`. 404 `no_pending_move`, 410 `token_expired`, 429 `rate_limited` + `Retry-After`, 409 `hostname_taken` / `move_stale`, 403 `blocked`. |
+| `DELETE /v1/networks/{id}/move` | Listing (the pending move cancelled; 200 without one too) |
 
 Wrong owner: 403 `not_owner` for a public (verified) listing, 404 for one you can't see.
+
+### Moving a listing to a new hostname
+
+Ownership is proven per hostname, so a listing can't just be edited to a new address. Instead its
+manager (the owner's account by Bearer token or the `boson_at` cookie, the listing's Network key as the
+stack admin panel uses, or an operator) **moves** it: the listing keeps its id, history, stats,
+channels, tags, theme, images, owner and verified status. Typical case: putting Boson in front of an
+existing ircd (`irc.example.org` → `irc.boson.example.org`), since Boson finds a network's
+`/.well-known/boson.json` from its listed hostname.
+
+1. `POST /v1/networks/{id}/move {"hostname": "irc.boson.example.org", "port": 6697, "tls": true}` → 201.
+   Only a `verified` or `lapsed` local listing can move (409 `not_verified` for a pending one: delete
+   and re-register instead; 409 `not_local` for imports; 403 `blocked`). The response's `move` carries a
+   new token and the record for the new hostname:
+
+   ```json
+   {"id": "mov_01J…", "status": "pending",
+    "from": {"hostname": "irc.example.org", "port": 6697, "tls": true},
+    "to": {"hostname": "irc.boson.example.org", "port": 6697, "tls": true},
+    "hostname": "irc.boson.example.org", "port": 6697, "tls": true,
+    "record_name": "_boson.irc.boson.example.org", "record_value": "boson-verify=<token>", "token": "<token>",
+    "requested_at": "…", "issued_at": "…", "expires_at": "… (issued + 72 h)", "last_checked_at": "…",
+    "expired": false}
+   ```
+
+   Until it verifies, nothing public changes: the listing serves the old hostname, the feed and
+   `seq` don't move, and the new hostname isn't shown to anyone else. The same request again returns
+   the same move (and token); a different target replaces it with a new token. The same hostname with
+   only a new port/tls applies at once (200, no DNS proof needed).
+2. Publish the TXT record at the new hostname and `POST /v1/networks/{id}/move/verify`. Like a first
+   verification it needs 3 of 3 resolvers, within 72 h of the token's issue, at most once per 30 s per
+   listing. The verify worker also checks pending moves on its own every `VERIFY_PENDING_EVERY` (1 h).
+3. On success, in one transaction: hostname/port/tls switch, the move's token becomes the listing's
+   verification token (the daily re-check then uses the new record), the status is `verified` (a lapsed
+   listing too), the old hostname is prepended to `previous_hostnames` (at most 10; moving back drops
+   it), the listing is due for a health probe of the new address, and the move is `completed`. The old
+   record can go.
+
+Rules:
+
+- **Uniqueness** follows registration: the new hostname can't be another listing's (409
+  `hostname_taken`) unless that is an imported listing or a local claim that was never verified and
+  whose token expired; those are removed when the move completes. Checked when requested and again
+  at completion (someone who verifies the hostname first wins). Blocked hostnames: 403 `blocked`.
+- **Expiry**: a move whose token is older than 72 h is no longer checked and `/move/verify` answers 410
+  `token_expired`; `move.expired` is true. Request it again for a fresh token, or cancel. 30 days later
+  the worker closes it (`expired`).
+- **Lookups**: `GET /v1/networks/lookup?hostname=<old>` returns the moved listing with `moved_from`
+  (an exact, visible listing at that hostname wins). `GET /v1/networks/{id}` is unchanged.
+- **Peers** get an update of the same listing (same id) with the new hostname, the new token and
+  `previous_hostnames` ([docs/federation.md](docs/federation.md#moves)).
+- **Stack admin panel** (follow-up): with its `Authorization: Network <key>` it finds its listing with
+  `GET /v1/networks/lookup?hostname=<irc host>` (the old hostname still resolves, with `moved_from`), reads
+  the pending move from the Listing's `move`, and drives `POST …/move`, `POST …/move/verify` and `DELETE
+  …/move`. A browser session uses the `boson_at` cookie and must send `X-Requested-With` on the writes.
+- **Audit**: `network.move_request`, `network.move_check`, `network.move_cancel`, `network.move` (meta
+  `from`/`to` `{hostname, port, tls}`, actor `system`/`verify` when the worker completed it), plus
+  `network.replace_imported` / `network.replace_expired` for a holder it removed. `network_moves` keeps
+  every request (`GET …/move` → `history`).
 
 ### Listing themes
 
@@ -272,6 +340,8 @@ TXT `_boson.<hostname>` containing `boson-verify=<token>`, checked on Cloudflare
   (`last_verified_at`).
 - Lapsed listings are re-checked weekly and return to verified when the record is back.
 - Imported (peer) listings are verified locally against the origin's token, without the 72 h limit.
+
+Pending [moves](#moving-a-listing-to-a-new-hostname) are checked the same way (strict, within 72 h) by the verify worker.
 
 Workers (verify, health every 15 min with an optional LUSERS read for `user_count`) run in-process;
 each run takes a Postgres advisory lock so only one replica runs it.

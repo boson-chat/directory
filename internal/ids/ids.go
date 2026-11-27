@@ -13,6 +13,7 @@ const (
 	Block   = "blk"
 	Audit   = "aud"
 	Request = "req"
+	Move    = "mov"
 )
 
 // New returns prefix_ULID. ulid.Make is safe for concurrent use and

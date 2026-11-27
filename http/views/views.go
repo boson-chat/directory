@@ -35,6 +35,10 @@ type Network struct {
 	// new users are joined to. Names as written; [] when none.
 	Channels         []string `json:"channels"`
 	AutojoinChannels []string `json:"autojoin_channels"`
+	// PreviousHostnames are the hostnames the listing was moved away from,
+	// most recent first; [] when it never moved. GET
+	// /v1/networks/lookup?hostname=<old> still finds it.
+	PreviousHostnames []string `json:"previous_hostnames"`
 	// LegacyID is the listing's id on the legacy boson API directory (a
 	// uuid), for rows imported from it: clients match servers saved under it.
 	LegacyID *string `json:"legacy_id,omitempty"`
@@ -80,10 +84,72 @@ type Verification struct {
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
 }
 
-// Listing is a network plus, for its managers, the verification record.
+// Listing is a network plus, for its managers, the verification record
+// and the pending move.
 type Listing struct {
 	Network      Network       `json:"network"`
 	Verification *Verification `json:"verification"`
+	// Move is the pending move to a new hostname (managers of local
+	// listings only; omitted when there is none).
+	Move *Move `json:"move,omitempty"`
+	// MovedFrom is set by a lookup by a hostname the listing was moved
+	// away from: the hostname asked for.
+	MovedFrom string `json:"moved_from,omitempty"`
+}
+
+// Address is a hostname, port and tls.
+type Address struct {
+	Hostname string `json:"hostname"`
+	Port     int    `json:"port"`
+	TLS      bool   `json:"tls"`
+}
+
+// Move is a request to move a listing to a new address. While pending, the
+// listing keeps its current address; the TXT record below, at the new
+// hostname, completes the move.
+type Move struct {
+	ID string `json:"id"`
+	// Status: pending | completed | cancelled | expired.
+	Status string  `json:"status"`
+	From   Address `json:"from"`
+	To     Address `json:"to"`
+	// Hostname, Port and TLS repeat To.
+	Hostname    string     `json:"hostname"`
+	Port        int        `json:"port"`
+	TLS         bool       `json:"tls"`
+	RequestedAt time.Time  `json:"requested_at"`
+	EndedAt     *time.Time `json:"ended_at,omitempty"`
+	// The record to publish (pending moves only).
+	RecordName    string     `json:"record_name,omitempty"`
+	RecordValue   string     `json:"record_value,omitempty"`
+	Token         string     `json:"token,omitempty"`
+	IssuedAt      *time.Time `json:"issued_at,omitempty"`
+	ExpiresAt     *time.Time `json:"expires_at,omitempty"`
+	LastCheckedAt *time.Time `json:"last_checked_at,omitempty"`
+	// Expired: the token is past its TTL; it is no longer checked. Request
+	// the move again for a new token, or cancel it.
+	Expired bool `json:"expired"`
+}
+
+// NewMove renders m. Only pending moves carry their record.
+func NewMove(m *network.Move, tokenTTL time.Duration, now time.Time) *Move {
+	if m == nil {
+		return nil
+	}
+	v := &Move{
+		ID: m.ID, Status: m.Status,
+		From:     Address{Hostname: m.FromHostname, Port: m.FromPort, TLS: m.FromTLS},
+		To:       Address{Hostname: m.ToHostname, Port: m.ToPort, TLS: m.ToTLS},
+		Hostname: m.ToHostname, Port: m.ToPort, TLS: m.ToTLS,
+		RequestedAt: m.RequestedAt, EndedAt: m.EndedAt, LastCheckedAt: m.LastCheckedAt,
+	}
+	if m.Status == network.MovePending {
+		issued, expires := m.TokenIssuedAt, m.TokenIssuedAt.Add(tokenTTL)
+		v.RecordName, v.RecordValue = dnsverify.RecordName(m.ToHostname), dnsverify.RecordValue(m.Token)
+		v.Token, v.IssuedAt, v.ExpiresAt = m.Token, &issued, &expires
+		v.Expired = now.Sub(m.TokenIssuedAt) > tokenTTL
+	}
+	return v
 }
 
 func nonNil(s []string) []string {
@@ -106,7 +172,8 @@ func NewNetwork(n *network.Network, m media.MediaServiceImpl) Network {
 		ID: n.ID, Hostname: n.Hostname, Port: n.Port, TLS: n.TLS, Name: n.Name, Description: n.Description,
 		Tags: nonNil(n.Tags), Languages: nonNil(n.Languages), IsNSFW: n.IsNSFW,
 		Channels: nonNil(n.Channels), AutojoinChannels: nonNil(n.AutojoinChannels),
-		WebsiteURL: n.WebsiteURL, AuthURL: n.AuthURL,
+		PreviousHostnames: nonNil(n.PreviousHostnames),
+		WebsiteURL:        n.WebsiteURL, AuthURL: n.AuthURL,
 		Status: n.Status, VerificationStatus: n.Status, LastVerifiedAt: n.LastVerifiedAt, LastCheckedAt: n.LastCheckedAt,
 		HealthStatus: n.HealthStatus, HealthCheckedAt: n.HealthCheckedAt, UserCount: n.UserCount, UserCountAt: n.UserCountAt,
 		Origin: n.Origin, CreatedAt: n.CreatedAt, UpdatedAt: n.UpdatedAt, RegisteredAt: n.CreatedAt,
